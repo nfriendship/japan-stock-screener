@@ -107,7 +107,6 @@ def analyze_market(target_date_str):
 def run_screener_batch(stock_df, target_date_str, progress_bar=None):
     """
     指定された判定日時点のデータを用いてスクリーニングを実行する。
-    進捗を「●銘柄 / 〇銘柄」の銘柄数ベースでリアルタイム表示。
     """
     tickers = stock_df['Ticker'].tolist()
     total_stock_count = len(tickers)

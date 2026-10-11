@@ -39,6 +39,11 @@ st.markdown("""
         color: #f0f6fc !important;
     }
     
+    /* 判定日などの入力ボックス内の文字を黒く見やすく調整 */
+    input {
+        color: #000000 !important;
+    }
+    
     /* CSVダウンロードボタンの視認性改善 */
     div.stDownloadButton > button {
         background-color: #238636 !important;
