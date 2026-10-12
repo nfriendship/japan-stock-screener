@@ -16,6 +16,14 @@ st.markdown("""
         color: #f0f6fc !important;
     }
     
+    /* 画面上部ヘッダー（Share、点3つボタン等の領域）を黒色ベースに固定 */
+    header[data-testid="stHeader"] {
+        background-color: #0e1117 !important;
+    }
+    header[data-testid="stHeader"] * {
+        color: #f0f6fc !important;
+    }
+    
     /* すべての見出し、通常テキスト、ラベル、説明文の文字色を強制的に明るくする */
     h1, h2, h3, h4, h5, h6, p, span, label {
         color: #f0f6fc !important;
@@ -27,10 +35,17 @@ st.markdown("""
         color: #f0f6fc !important;
     }
     section[data-testid="stSidebar"] label, 
-    section[data-testid="stSidebar"] span, 
-    section[data-testid="stSidebar"] div,
+    section[data-testid="stSidebar"] span,
     section[data-testid="stSidebar"] .stTextInput label {
         color: #f0f6fc !important;
+    }
+    
+    /* サイドバー内のテキスト入力枠を白背景・黒文字で確実に固定 */
+    section[data-testid="stSidebar"] input {
+        background-color: #ffffff !important;
+        color: #000000 !important;
+        -webkit-text-fill-color: #000000 !important;
+        font-weight: 700 !important;
     }
     
     /* メトリック（指標カード）の背景と内部の文字調整 */

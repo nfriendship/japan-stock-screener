@@ -20,7 +20,7 @@ st.markdown("""
         color: #f0f6fc !important;
     }
     
-    /* 右上のヘッダー（Stop、Deploy、点3つボタンなど）の背景を黒くし、文字を白くする */
+    /* 右上のヘッダー（Stop、Deploy、点3つボタンなど）の背景を黒くし、文字を白くして確実に見えるようにする */
     header[data-testid="stHeader"] {
         background-color: #0e1117 !important;
     }
@@ -38,20 +38,24 @@ st.markdown("""
         color: #f0f6fc !important;
     }
     
-    /* 【超重要】サイドバー内の入力ボックス（日付・テキスト）の視認性対策 */
-    /* 背景を白、文字色をはっきりとした黒に固定 */
-    section[data-testid="stSidebar"] input,
-    div[data-testid="stDateInput"] input,
-    div[data-baseweb="input"] input {
-        background-color: #ffffff !important;
-        color: #111111 !important;
-        -webkit-text-fill-color: #111111 !important;
-        font-weight: 600 !important;
+    /* === 日付入力枠（stDateInput）の内部を完全黒文字化 === */
+    div[data-testid="stDateInput"] {
+        background-color: transparent !important;
     }
-
-    /* 入力ボックスの外枠コンテナの文字色・背景色も同期 */
-    div[data-baseweb="input"] {
+    div[data-testid="stDateInput"] div[data-baseweb="input"],
+    div[data-testid="stDateInput"] div[data-baseweb="base-input"] {
         background-color: #ffffff !important;
+    }
+    /* 内部のすべての階層（div, input, span等）の文字色を強制的に黒にする */
+    div[data-testid="stDateInput"] * {
+        color: #000000 !important;
+        -webkit-text-fill-color: #000000 !important;
+    }
+    div[data-testid="stDateInput"] input {
+        background-color: #ffffff !important;
+        color: #000000 !important;
+        -webkit-text-fill-color: #000000 !important;
+        font-weight: 700 !important;
     }
     
     /* CSVダウンロードボタンの視認性改善 */
@@ -73,7 +77,7 @@ st.markdown("""
         color: #f0f6fc !important;
     }
     
-    /* エキスパンダーの調整 */
+    /* エキスパンダー（詳細確認）の背景・文字色調整 */
     details {
         background-color: #161b22 !important;
         border: 1px solid #30363d !important;
