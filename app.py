@@ -155,7 +155,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("📈 株式買い候補銘柄 自動抽出システム")
-st.markdown("東証の主要投資対象銘柄データに基づき、アルゴリズムでブレイクアウト銘柄を抽出します。")
+st.markdown("JPX公式の東証全上場銘柄（個別株のみ）に基づき、アルゴリズムでブレイクアウト銘柄を抽出します。")
 
 # --- サイドバー：実行設定 ---
 st.sidebar.header("⚙ 実行設定")
@@ -179,7 +179,7 @@ st.markdown("---")
 if st.button("指定日でのスクリーニングを実行する", type="primary"):
     progress_bar = st.progress(0, text="市場データを取得準備中...")
     
-    with st.spinner("東証銘柄リスト（約3,000銘柄）を準備中..."):
+    with st.spinner("JPX公式の東証全個別株リスト（約3,800銘柄）を取得中..."):
         stock_df = get_tse_stock_list()
         
     with st.spinner("スクリーニングを実行中..."):
@@ -203,7 +203,7 @@ if 'result_df' in st.session_state:
     
     # 審査母数の明示
     if meta:
-        st.info(f"📊 **審査母数**: 全 {meta.get('total_stocks', 0)} 銘柄中 **{meta.get('valid_stocks', 0)} 銘柄** の株価データを正常審査（有効審査率: **{meta.get('success_rate', 0):.1f}%**）")
+        st.info(f"📊 **審査母数**: 全 {meta.get('total_stocks', 0)} 実在個別銘柄中 **{meta.get('valid_stocks', 0)} 銘柄** の株価データを正常審査（有効審査率: **{meta.get('success_rate', 0):.1f}%**）")
         
     st.subheader(f"📋 買い候補銘柄一覧（判定日: {d_str} / 該当数: {len(res_df)}件）")
     
