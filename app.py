@@ -87,7 +87,6 @@ st.markdown("""
     div[data-testid="stButton"] button:hover,
     div.stButton button:hover {
         background-color: #388bfd !important;
-        background: #388bfd !important;
         border-color: #58a6ff !important;
     }
     div[data-testid="stButton"] button *,
@@ -104,10 +103,8 @@ st.markdown("""
         background: #ff4b4b !important;
         border: 1px solid #ff6b6b !important;
     }
-    div[data-testid="stButton"] button[kind="primary"]:hover,
-    div.stButton button[kind="primary"]:hover {
+    div[data-testid="stButton"] button[kind="primary"]:hover {
         background-color: #ff6b6b !important;
-        background: #ff6b6b !important;
     }
     div[data-testid="stButton"] button[kind="primary"] *,
     div.stButton button[kind="primary"] * {
@@ -128,11 +125,8 @@ st.markdown("""
         box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4) !important;
     }
     div[data-testid="stDownloadButton"] button:hover,
-    div[data-testid="stDownloadButton"] a:hover,
-    div.stDownloadButton button:hover,
-    div.stDownloadButton a:hover {
+    div[data-testid="stDownloadButton"] a:hover {
         background-color: #2ea043 !important;
-        background: #2ea043 !important;
         border-color: #56d364 !important;
     }
     div[data-testid="stDownloadButton"] *,
@@ -161,7 +155,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("📈 株式買い候補銘柄 自動抽出システム")
-st.markdown("JPX公式の東証実在銘柄データに基づき、アルゴリズムでブレイクアウト銘柄を抽出します。")
+st.markdown("東証の主要投資対象銘柄データに基づき、アルゴリズムでブレイクアウト銘柄を抽出します。")
 
 # --- サイドバー：実行設定 ---
 st.sidebar.header("⚙ 実行設定")
@@ -185,7 +179,7 @@ st.markdown("---")
 if st.button("指定日でのスクリーニングを実行する", type="primary"):
     progress_bar = st.progress(0, text="市場データを取得準備中...")
     
-    with st.spinner("JPX公式銘柄リスト（プライム・スタンダード）を読込中..."):
+    with st.spinner("東証銘柄リスト（約3,000銘柄）を準備中..."):
         stock_df = get_tse_stock_list()
         
     with st.spinner("スクリーニングを実行中..."):
@@ -207,9 +201,9 @@ if 'result_df' in st.session_state:
     d_str = st.session_state.get('target_date_str', target_date_str)
     meta = st.session_state.get('meta_stats', {})
     
-    # データ取得成功率の表示（母数の透明性）
+    # 審査母数の明示
     if meta:
-        st.info(f"📊 **審査母数**: 全 {meta.get('total_stocks', 0)} 実在銘柄中 **{meta.get('valid_stocks', 0)} 銘柄** を正常取得（取得成功率: **{meta.get('success_rate', 0):.1f}%**）")
+        st.info(f"📊 **審査母数**: 全 {meta.get('total_stocks', 0)} 銘柄中 **{meta.get('valid_stocks', 0)} 銘柄** の株価データを正常審査（有効審査率: **{meta.get('success_rate', 0):.1f}%**）")
         
     st.subheader(f"📋 買い候補銘柄一覧（判定日: {d_str} / 該当数: {len(res_df)}件）")
     
