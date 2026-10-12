@@ -72,17 +72,59 @@ st.markdown("""
         color: #58a6ff !important;
     }
     
-    /* ボタンデザイン */
-    div.stDownloadButton > button {
-        background-color: #238636 !important;
-        color: #ffffff !important;
-        border: 1px solid #3fb950 !important;
-        font-weight: bold !important;
-        border-radius: 6px;
+    /* ============================================================== */
+    /* 🎨 各種ボタンの視認性最適化（背景色 ＆ 内部テキスト強制白文字） */
+    /* ============================================================== */
+    
+    /* 1. 一括検証ボタン（ブルー系） */
+    div[data-testid="stButton"] > button {
+        background-color: #1f6feb !important;
+        border: 1px solid #388bfd !important;
+        border-radius: 6px !important;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4) !important;
     }
-    div.stDownloadButton > button:hover {
+    div[data-testid="stButton"] > button:hover {
+        background-color: #388bfd !important;
+        border-color: #58a6ff !important;
+    }
+    div[data-testid="stButton"] > button,
+    div[data-testid="stButton"] > button * {
+        color: #ffffff !important;
+        -webkit-text-fill-color: #ffffff !important;
+        font-weight: bold !important;
+    }
+    
+    /* 2. スクリーニング実行ボタン（プライマリ・レッド系） */
+    div[data-testid="stButton"] > button[kind="primary"] {
+        background-color: #ff4b4b !important;
+        border: 1px solid #ff6b6b !important;
+    }
+    div[data-testid="stButton"] > button[kind="primary"]:hover {
+        background-color: #ff6b6b !important;
+    }
+    div[data-testid="stButton"] > button[kind="primary"],
+    div[data-testid="stButton"] > button[kind="primary"] * {
+        color: #ffffff !important;
+        -webkit-text-fill-color: #ffffff !important;
+        font-weight: bold !important;
+    }
+    
+    /* 3. CSVダウンロードボタン（グリーン系） */
+    div[data-testid="stDownloadButton"] > button {
+        background-color: #238636 !important;
+        border: 1px solid #3fb950 !important;
+        border-radius: 6px !important;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4) !important;
+    }
+    div[data-testid="stDownloadButton"] > button:hover {
         background-color: #2ea043 !important;
         border-color: #56d364 !important;
+    }
+    div[data-testid="stDownloadButton"] > button,
+    div[data-testid="stDownloadButton"] > button * {
+        color: #ffffff !important;
+        -webkit-text-fill-color: #ffffff !important;
+        font-weight: bold !important;
     }
     
     /* データフレームやテーブルの調整 */
@@ -155,7 +197,7 @@ if 'result_df' in st.session_state:
     if res_df.empty:
         st.warning("条件に一致する銘柄は見つかりませんでした。")
     else:
-        # 画面表示用テーブル（詳細理由列はエクスパンダーで表示）
+        # 画面表示用テーブル
         display_cols = ['コード', 'ティッカー', '企業名', '現在値', 'ピボット価格', '状態', '出来高倍率', '20日平均売買代金(億円)']
         st.dataframe(res_df[display_cols], use_container_width=True)
         
@@ -189,7 +231,7 @@ if 'result_df' in st.session_state:
         with v_col2:
             st.caption("※ 損切りライン(SL)はピボット価格とATR(20)から自動設定されます（買値より下を完全保証）。同日両到達時は保守的に損切り優先と判定します。")
             
-        if st.button("🚀 この抽出銘柄のトレード結果を一括検証する", type="secondary"):
+        if st.button("🚀 この抽出銘柄のトレード結果を一括検証する"):
             v_progress = st.progress(0, text="抽出銘柄の推移データを一括取得中...")
             val_df = batch_validate_trades(res_df, d_str, risk_reward_ratio=rrr, progress_bar=v_progress)
             st.session_state['val_df'] = val_df
@@ -225,15 +267,13 @@ if 'result_df' in st.session_state:
                     m4.metric("現在保有中（含み推移）", f"{active_count} 銘柄", f"合計損益: {total_pnl_yen:+.1f}円")
                     
                     st.markdown("#### 📋 銘柄別トレード結果一覧（売買価格・損益詳細）")
-                    # 画面表示用テーブル
                     val_display_cols = [
                         'コード', '企業名', 'エントリー日', '買値(エントリー)', '売値(決済/現在値)', 
                         'SL価格', 'TP目標', '検証ステータス', '決済日/現在日', '損益額(円)', '損益率(%)', '保有日数'
                     ]
                     st.dataframe(val_df[val_display_cols], use_container_width=True)
                     
-                    # --- スクリーニング条件指標 ＋ トレード結果 の完全突合CSV作成 ---
-                    # 企業名などの重複列を除いてコードをキーに結合
+                    # --- スクリーニング条件指標 ＆ トレード結果 の完全突合CSV作成 ---
                     val_subset = val_df.drop(columns=['企業名', 'ティッカー'], errors='ignore')
                     merged_export = pd.merge(export_df, val_subset, on='コード', how='left')
                     
@@ -246,5 +286,5 @@ if 'result_df' in st.session_state:
                         data=csv_merged,
                         file_name=f"vcp_trade_validation_merged_{d_str}.csv",
                         mime="text/csv",
-                        help="スクリーニング時の全指標（出来高倍率、各SMA、売買代金等）と、実際の売買価格・損益結果が1行に結合されたCSVです。アルゴリズム改善の要因分析にそのまま活用できます。"
+                        help="スクリーニング時の全指標と実際の売買結果が1行に結合されたCSVです。"
                     )
