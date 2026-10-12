@@ -28,14 +28,11 @@ st.markdown("""
         color: #f0f6fc !important;
     }
     
-    /* ============================================================== */
-    /* 📌 サイドバー全体の背景とラベル視認性の向上 */
-    /* ============================================================== */
+    /* サイドバー全体の背景とラベル視認性 */
     section[data-testid="stSidebar"] {
         background-color: #161b22;
         color: #f0f6fc !important;
     }
-    /* 「判定基準日（この日までのデータで判定）」などのラベル文字を完全な白で強調 */
     section[data-testid="stSidebar"] label,
     section[data-testid="stSidebar"] label p,
     section[data-testid="stSidebar"] label span,
@@ -78,11 +75,7 @@ st.markdown("""
         color: #58a6ff !important;
     }
     
-    /* ============================================================== */
-    /* 🎨 各種ボタンの視認性最適化（階層差に強いセレクタ設計） */
-    /* ============================================================== */
-    
-    /* 1. 一括検証ボタン（ブルー系） */
+    /* ボタンデザイン */
     div[data-testid="stButton"] button,
     div.stButton button {
         background-color: #1f6feb !important;
@@ -104,7 +97,7 @@ st.markdown("""
         font-weight: bold !important;
     }
     
-    /* 2. スクリーニング実行ボタン（プライマリ・レッド系） */
+    /* スクリーニング実行ボタン（プライマリ・レッド） */
     div[data-testid="stButton"] button[kind="primary"],
     div.stButton button[kind="primary"] {
         background-color: #ff4b4b !important;
@@ -123,7 +116,7 @@ st.markdown("""
         font-weight: bold !important;
     }
     
-    /* 3. CSVダウンロードボタン（グリーン系：直下セレクタ > を排除して確実に適用） */
+    /* CSVダウンロードボタン（グリーン系） */
     div[data-testid="stDownloadButton"] button,
     div[data-testid="stDownloadButton"] a,
     div.stDownloadButton button,
@@ -149,13 +142,11 @@ st.markdown("""
         font-weight: bold !important;
     }
     
-    /* データフレームやテーブルの調整 */
     dataframe, table {
         background-color: #161b22 !important;
         color: #f0f6fc !important;
     }
     
-    /* エキスパンダーの調整 */
     details {
         background-color: #161b22 !important;
         border: 1px solid #30363d !important;
@@ -170,7 +161,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("📈 株式買い候補銘柄 自動抽出システム")
-st.markdown("指定した日付時点の株価データに基づき、アルゴリズムでブレイクアウト銘柄を抽出します。")
+st.markdown("JPX公式の東証実在銘柄データに基づき、アルゴリズムでブレイクアウト銘柄を抽出します。")
 
 # --- サイドバー：実行設定 ---
 st.sidebar.header("⚙ 実行設定")
@@ -194,17 +185,18 @@ st.markdown("---")
 if st.button("指定日でのスクリーニングを実行する", type="primary"):
     progress_bar = st.progress(0, text="市場データを取得準備中...")
     
-    with st.spinner("銘柄リストを取得中..."):
+    with st.spinner("JPX公式銘柄リスト（プライム・スタンダード）を読込中..."):
         stock_df = get_tse_stock_list()
         
     with st.spinner("スクリーニングを実行中..."):
-        result_df = run_screener_batch(stock_df, target_date_str, progress_bar)
+        result_df, meta_stats = run_screener_batch(stock_df, target_date_str, progress_bar)
         
     progress_bar.empty()
     st.success("解析が完了しました！")
     
     # セッションステートに保存
     st.session_state['result_df'] = result_df
+    st.session_state['meta_stats'] = meta_stats
     st.session_state['target_date_str'] = target_date_str
     if 'val_df' in st.session_state:
         del st.session_state['val_df']
@@ -213,14 +205,19 @@ if st.button("指定日でのスクリーニングを実行する", type="primar
 if 'result_df' in st.session_state:
     res_df = st.session_state['result_df']
     d_str = st.session_state.get('target_date_str', target_date_str)
+    meta = st.session_state.get('meta_stats', {})
     
+    # データ取得成功率の表示（母数の透明性）
+    if meta:
+        st.info(f"📊 **審査母数**: 全 {meta.get('total_stocks', 0)} 実在銘柄中 **{meta.get('valid_stocks', 0)} 銘柄** を正常取得（取得成功率: **{meta.get('success_rate', 0):.1f}%**）")
+        
     st.subheader(f"📋 買い候補銘柄一覧（判定日: {d_str} / 該当数: {len(res_df)}件）")
     
     if res_df.empty:
         st.warning("条件に一致する銘柄は見つかりませんでした。")
     else:
         # 画面表示用テーブル
-        display_cols = ['コード', 'ティッカー', '企業名', '現在値', 'ピボット価格', '状態', '出来高倍率', '20日平均売買代金(億円)']
+        display_cols = ['コード', '企業名', '現在値', 'ピボット価格', '状態', '出来高倍率', '20日平均売買代金(億円)']
         st.dataframe(res_df[display_cols], use_container_width=True)
         
         st.markdown("### 🔍 各銘柄の選定理由・根拠の詳細確認")
@@ -228,7 +225,7 @@ if 'result_df' in st.session_state:
             with st.expander(f"【{row['コード']}】 {row['企業名']} （現在値: {row['現在値']}円 / 出来高倍率: {row['出来高倍率']}倍 / 売買代金: {row['20日平均売買代金(億円)']}億円）"):
                 st.markdown(row['💡 抽出理由・根拠詳細'])
                 
-        # --- スクリーニング単体のCSVダウンロード（全指標入り） ---
+        # --- スクリーニング単体のCSVダウンロード ---
         export_df = res_df.copy()
         export_df.insert(0, '判定日', d_str)
         csv_screening = export_df.to_csv(index=False).encode('utf-8-sig')
@@ -272,7 +269,6 @@ if 'result_df' in st.session_state:
                     st.info(f"⏳ **検証結果**: 設定判定日（{d_str}）以降の相場データが存在しないため、全銘柄が**翌営業日の寄り付き待ち（待機中）**です。相場が開いてデータが更新された後に再度検証を行ってください。")
                     st.dataframe(val_df[['コード', '企業名', '検証ステータス']], use_container_width=True)
                 else:
-                    # 統計メトリクスの集計
                     finished_trades = val_df[val_df['勝敗'].isin(['勝ち', '負け'])]
                     win_trades = val_df[val_df['勝敗'] == '勝ち']
                     

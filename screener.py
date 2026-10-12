@@ -1,68 +1,70 @@
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import io
+import time
+import requests
+import streamlit as st
 from datetime import datetime, timedelta
 
+@st.cache_data(ttl=86400)
 def get_tse_stock_list():
     """
-    東証プライムおよびスタンダード市場の主要な投資対象・流動性銘柄のリストを返す
+    JPX公式の東証上場銘柄リスト（Excel）からプライムおよびスタンダード市場の実在銘柄のみを取得する。
+    （正式社名も自動取得・1日キャッシュ）
     """
-    base_codes = []
-    ranges = [
-        (1301, 1999), (2001, 2999), (3001, 3999), (4001, 4999),
-        (5001, 5999), (6001, 6999), (7001, 7999), (8001, 8999), (9001, 9997)
-    ]
+    url = "https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_j.xls"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
     
-    specific_tickers = [
+    try:
+        response = requests.get(url, headers=headers, timeout=15)
+        if response.status_code == 200:
+            df_jpx = pd.read_excel(io.BytesIO(response.content))
+            
+            # プライム市場およびスタンダード市場を抽出
+            market_col = '市場・商品区分' if '市場・商品区分' in df_jpx.columns else df_jpx.columns[3]
+            code_col = 'コード' if 'コード' in df_jpx.columns else df_jpx.columns[1]
+            name_col = '銘柄名' if '銘柄名' in df_jpx.columns else df_jpx.columns[2]
+            
+            mask = df_jpx[market_col].astype(str).str.contains('プライム|スタンダード', na=False)
+            filtered = df_jpx[mask].copy()
+            
+            codes = []
+            tickers = []
+            names = []
+            
+            for _, row in filtered.iterrows():
+                c_str = str(row[code_col]).strip()
+                # 4桁の通常数字コードのみ（新株予約権やETF等を除外）
+                if len(c_str) == 4 and c_str.isdigit():
+                    codes.append(c_str)
+                    tickers.append(f"{c_str}.T")
+                    names.append(str(row[name_col]).strip())
+                    
+            if len(tickers) >= 1500:
+                return pd.DataFrame({
+                    "Code": codes,
+                    "Ticker": tickers,
+                    "Name": names
+                })
+    except Exception as e:
+        pass
+        
+    # 万一JPX通信に失敗した際のフォールバック用主要銘柄
+    fallback_tickers = [
         "7203.T", "6758.T", "9984.T", "8306.T", "6861.T", "6594.T", "9432.T", "8035.T",
         "4063.T", "6098.T", "4568.T", "6902.T", "7974.T", "4661.T", "8766.T", "2914.T",
         "6273.T", "6367.T", "6981.T", "7741.T", "4502.T", "4543.T", "5108.T", "3382.T",
         "8267.T", "9020.T", "9022.T", "9433.T", "9983.T", "6301.T", "6501.T", "7267.T",
-        "3101.T", "3103.T", "3407.T", "3402.T", "5401.T", "5711.T", "5801.T", "6701.T",
-        "8001.T", "8031.T", "8058.T", "8002.T", "8053.T", "8316.T", "8411.T", "8253.T",
-        "8591.T", "8750.T", "8725.T", "8308.T", "8473.T", "4188.T", "4208.T", "4452.T",
-        "4911.T", "4005.T", "4183.T", "4204.T", "4523.T", "4519.T", "4578.T", "4503.T",
-        "4507.T", "4536.T", "4587.T", "4528.T", "6326.T", "6146.T", "6383.T", "6305.T",
-        "6201.T", "6471.T", "6479.T", "5411.T", "5713.T", "5802.T", "5020.T", "5019.T",
-        "5901.T", "5631.T", "2802.T", "2502.T", "2503.T", "2801.T", "3099.T", "8233.T",
-        "2651.T", "1925.T", "1928.T", "1801.T", "1802.T", "1812.T", "8801.T", "8802.T",
-        "8830.T", "3289.T", "3003.T", "9101.T", "9104.T", "9107.T", "9202.T", "9201.T",
-        "9064.T", "9042.T", "9735.T", "2433.T", "4684.T", "4732.T", "2371.T", "3659.T",
-        "4751.T", "2181.T", "3116.T", "3132.T", "3150.T", "3197.T", "3231.T", "3232.T",
-        "3291.T", "3436.T", "3563.T", "3660.T", "3665.T", "3673.T", "3681.T", "3697.T",
-        "3769.T", "3861.T", "3863.T", "3902.T", "4004.T", "4021.T", "4042.T", "4043.T",
-        "4061.T", "4151.T", "4272.T", "4324.T", "4344.T", "4516.T", "4530.T", "4552.T",
-        "4553.T", "4611.T", "4613.T", "4631.T", "4633.T", "4676.T", "4716.T", "4912.T",
-        "4927.T", "5191.T", "5201.T", "5214.T", "5232.T", "5233.T", "5332.T", "5333.T",
-        "5334.T", "5406.T", "5440.T", "5486.T", "5541.T", "5632.T", "5706.T", "5714.T",
-        "5721.T", "5727.T", "5803.T", "6103.T", "6113.T", "6268.T", "6302.T", "6370.T",
-        "6436.T", "6448.T", "6460.T", "6465.T", "6473.T", "6474.T", "6481.T", "6504.T",
-        "6506.T", "6586.T", "6674.T", "6703.T", "6727.T", "6753.T", "6770.T", "6845.T",
-        "6869.T", "6971.T", "6976.T", "6988.T", "6996.T", "7011.T", "7012.T", "7186.T",
-        "7201.T", "7202.T", "7205.T", "7211.T", "7231.T", "7272.T", "7282.T", "7296.T",
-        "7313.T", "7459.T", "7518.T", "7532.T", "7731.T", "7733.T", "7735.T", "7762.T",
-        "7832.T", "7860.T", "7864.T", "7911.T", "7912.T", "7917.T", "7951.T", "7956.T",
-        "8015.T", "8020.T", "8056.T", "8060.T", "8088.T", "8113.T", "8174.T", "8331.T",
-        "8334.T", "8354.T", "8355.T", "8359.T", "8410.T", "8418.T", "8570.T", "8601.T",
-        "8604.T", "8628.T", "8630.T", "8697.T", "8804.T", "8806.T", "8830.T", "8876.T",
-        "9001.T", "9005.T", "9007.T", "9009.T", "9041.T", "9044.T", "9045.T", "9048.T", "9062.T",
-        "9065.T", "9142.T", "9301.T", "9303.T", "9364.T", "9412.T", "9435.T", "9501.T",
-        "9502.T", "9503.T", "9531.T", "9532.T", "9602.T", "9706.T", "9716.T", "9766.T", "9843.T"
+        "5401.T", "5711.T", "5801.T", "8001.T", "8031.T", "8058.T", "8002.T", "8316.T"
     ]
-    
-    auto_generated = []
-    for r_start, r_end in ranges:
-        for code_num in range(r_start, r_end + 1, 3):
-            auto_generated.append(f"{code_num}.T")
-            
-    all_tickers = list(set(specific_tickers + auto_generated))
-    
-    df = pd.DataFrame({
-        "Code": [t.replace(".T", "") for t in all_tickers],
-        "Ticker": all_tickers,
-        "Name": [f"銘柄_{t.replace('.T', '')}" for t in all_tickers]
+    return pd.DataFrame({
+        "Code": [t.replace(".T", "") for t in fallback_tickers],
+        "Ticker": fallback_tickers,
+        "Name": [f"東証主力_{t.replace('.T', '')}" for t in fallback_tickers]
     })
-    return df
 
 def analyze_market(target_date_str):
     """
@@ -99,13 +101,15 @@ def analyze_market(target_date_str):
 
 def run_screener_batch(stock_df, target_date_str, progress_bar=None):
     """
-    指定された判定日時点のデータを用いてスクリーニングを実行し、全テクニカル指標の数値を保持する
+    指定された判定日時点のデータを用いてスクリーニングを実行し、全テクニカル指標の数値を保持する。
+    自動リトライ機構と最適化チャンクにより取得ブレを最小化。
     """
     tickers = stock_df['Ticker'].tolist()
     total_stock_count = len(tickers)
     results = []
     
-    chunk_size = 300
+    # タイムアウトとレート制限を最小化するためチャンクサイズを150に設定
+    chunk_size = 150
     total_chunks = (total_stock_count + chunk_size - 1) // chunk_size
     
     all_data = {}
@@ -117,28 +121,34 @@ def run_screener_batch(stock_df, target_date_str, progress_bar=None):
         
         if progress_bar:
             progress = int((processed_count / total_stock_count) * 70)
-            progress_bar.progress(progress / 100.0, text=f"株価データを高速一括取得中... ({processed_count} / {total_stock_count} 銘柄)")
+            progress_bar.progress(progress / 100.0, text=f"実在銘柄データを高速一括取得中... ({processed_count} / {total_stock_count} 銘柄)")
             
-        try:
-            df_chunk = yf.download(chunk_tickers, period="2y", group_by='ticker', threads=True, progress=False)
-            if not df_chunk.empty:
-                for t in chunk_tickers:
-                    try:
-                        if len(chunk_tickers) == 1:
-                            sub_df = df_chunk
-                        else:
-                            sub_df = df_chunk[t].dropna(how='all')
-                        if not sub_df.empty:
-                            all_data[t] = sub_df
-                    except:
-                        continue
-        except Exception as e:
-            pass
-            
+        # 最大2回リトライ
+        df_chunk = None
+        for attempt in range(2):
+            try:
+                df_chunk = yf.download(chunk_tickers, period="2y", group_by='ticker', threads=True, progress=False)
+                if df_chunk is not None and not df_chunk.empty:
+                    break
+            except Exception:
+                time.sleep(1.5)
+                
+        if df_chunk is not None and not df_chunk.empty:
+            for t in chunk_tickers:
+                try:
+                    if len(chunk_tickers) == 1:
+                        sub_df = df_chunk.dropna(how='all')
+                    else:
+                        sub_df = df_chunk[t].dropna(how='all')
+                    if not sub_df.empty:
+                        all_data[t] = sub_df
+                except:
+                    continue
+                    
         processed_count += chunk_len
         
     if progress_bar:
-        progress_bar.progress(0.70, text=f"株価データ取得完了。スクリーニング解析を開始します...")
+        progress_bar.progress(0.70, text=f"データ取得完了。スクリーニング解析を開始します...")
         
     total_valid = len(all_data)
     analyzed_count = 0
@@ -254,7 +264,12 @@ def run_screener_batch(stock_df, target_date_str, progress_bar=None):
     if progress_bar:
         progress_bar.empty()
         
-    return pd.DataFrame(results)
+    meta_stats = {
+        'total_stocks': total_stock_count,
+        'valid_stocks': total_valid,
+        'success_rate': (total_valid / total_stock_count * 100) if total_stock_count > 0 else 0.0
+    }
+    return pd.DataFrame(results), meta_stats
 
 def batch_validate_trades(screened_df, signal_date_str, risk_reward_ratio=2.5, progress_bar=None):
     """
@@ -269,7 +284,6 @@ def batch_validate_trades(screened_df, signal_date_str, risk_reward_ratio=2.5, p
     if progress_bar:
         progress_bar.progress(0.1, text=f"検証対象 {total} 銘柄の株価データを一括ダウンロード中...")
         
-    # レートリミットを回避するため、全銘柄を一括高速ダウンロード
     all_data = {}
     try:
         df_batch = yf.download(tickers, period="2y", group_by='ticker', threads=True, progress=False)
@@ -307,7 +321,7 @@ def batch_validate_trades(screened_df, signal_date_str, risk_reward_ratio=2.5, p
             past_df = df[df.index <= signal_date_str]
             future_df = df[df.index > signal_date_str]
             
-            # 未来データが存在しない場合（最新日付で実行された場合）
+            # 未来データが存在しない場合
             if future_df.empty:
                 validation_results.append({
                     'コード': code,
@@ -327,7 +341,6 @@ def batch_validate_trades(screened_df, signal_date_str, risk_reward_ratio=2.5, p
                 })
                 continue
                 
-            # ATR(20)の算出
             pivot_price = past_df['High'].tail(20).iloc[:-1].max()
             high_low = past_df['High'] - past_df['Low']
             high_cp = np.abs(past_df['High'] - past_df['Close'].shift())
@@ -337,13 +350,11 @@ def batch_validate_trades(screened_df, signal_date_str, risk_reward_ratio=2.5, p
             if pd.isna(atr20) or atr20 <= 0:
                 atr20 = past_df['Close'].iloc[-1] * 0.02
                 
-            # 翌営業日寄り付きでエントリー
             entry_date = future_df.index[0]
             entry_price = future_df['Open'].iloc[0]
             
-            # === SL価格の安全設計（買値との逆転防止ガード） ===
+            # SL価格の安全設計（買値との逆転防止ガード）
             calc_sl = max(pivot_price * 0.95, pivot_price - (1.5 * atr20))
-            # SLは必ず買値未満でなければならない（最大損失幅は買値の-7%、またはATR×1.5）
             sl_price = min(calc_sl, entry_price - (1.5 * atr20), entry_price * 0.95)
             
             risk_amount = entry_price - sl_price
@@ -355,7 +366,6 @@ def batch_validate_trades(screened_df, signal_date_str, risk_reward_ratio=2.5, p
             
             trade_period_df = future_df.loc[entry_date:]
             
-            # 保有中を初期値に設定
             current_last_close = trade_period_df['Close'].iloc[-1]
             pnl_amount = current_last_close - entry_price
             pnl_pct = (pnl_amount / entry_price) * 100
@@ -366,7 +376,6 @@ def batch_validate_trades(screened_df, signal_date_str, risk_reward_ratio=2.5, p
             hold_days = len(trade_period_df)
             outcome = "保有中"
             
-            # 日足のシミュレーション
             for d_idx, d_row in trade_period_df.iterrows():
                 d_low = d_row['Low']
                 d_high = d_row['High']
