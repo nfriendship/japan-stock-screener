@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-from screener import get_tse_stock_list, analyze_market, run_screener_batch
+from screener import get_tse_stock_list, analyze_market, run_screener_batch, batch_validate_trades
 
 # --- ページ設定 ---
 st.set_page_config(page_title="日本株VCP・ブレイクアウトスクリーニングシステム", layout="wide")
@@ -20,7 +20,7 @@ st.markdown("""
         color: #f0f6fc !important;
     }
     
-    /* 右上のヘッダー（Stop、Deploy、点3つボタンなど）の背景を黒くし、文字を白くして確実に見えるようにする */
+    /* 右上のヘッダーの背景を黒くし、文字を白くする */
     header[data-testid="stHeader"] {
         background-color: #0e1117 !important;
     }
@@ -38,7 +38,7 @@ st.markdown("""
         color: #f0f6fc !important;
     }
     
-    /* === 日付入力枠（stDateInput）の内部を完全黒文字化 === */
+    /* 日付入力枠（stDateInput）の内部を完全黒文字化 */
     div[data-testid="stDateInput"] {
         background-color: transparent !important;
     }
@@ -46,7 +46,6 @@ st.markdown("""
     div[data-testid="stDateInput"] div[data-baseweb="base-input"] {
         background-color: #ffffff !important;
     }
-    /* 内部のすべての階層（div, input, span等）の文字色を強制的に黒にする */
     div[data-testid="stDateInput"] * {
         color: #000000 !important;
         -webkit-text-fill-color: #000000 !important;
@@ -58,7 +57,22 @@ st.markdown("""
         font-weight: 700 !important;
     }
     
-    /* CSVダウンロードボタンの視認性改善 */
+    /* メトリック（指標カード）の背景 */
+    div[data-testid="metric-container"] {
+        background-color: #1f242d;
+        border: 1px solid #30363d;
+        padding: 12px;
+        border-radius: 8px;
+    }
+    div[data-testid="metric-container"] label {
+        color: #c9d1d9 !important;
+        font-weight: bold !important;
+    }
+    div[data-testid="metric-container"] div[data-testid="stMetricValue"] {
+        color: #58a6ff !important;
+    }
+    
+    /* ボタンデザイン */
     div.stDownloadButton > button {
         background-color: #238636 !important;
         color: #ffffff !important;
@@ -77,7 +91,7 @@ st.markdown("""
         color: #f0f6fc !important;
     }
     
-    /* エキスパンダー（詳細確認）の背景・文字色調整 */
+    /* エキスパンダーの調整 */
     details {
         background-color: #161b22 !important;
         border: 1px solid #30363d !important;
@@ -128,6 +142,9 @@ if st.button("指定日でのスクリーニングを実行する", type="primar
     # セッションステートに結果を保存
     st.session_state['result_df'] = result_df
     st.session_state['target_date_str'] = target_date_str
+    # 検証結果はリセット
+    if 'val_df' in st.session_state:
+        del st.session_state['val_df']
 
 # --- 結果の表示 ---
 if 'result_df' in st.session_state:
@@ -139,7 +156,7 @@ if 'result_df' in st.session_state:
     if res_df.empty:
         st.warning("条件に一致する銘柄は見つかりませんでした。")
     else:
-        # 画面表示用のテーブル（抽出理由は除外）
+        # 画面表示用のテーブル
         display_df = res_df.drop(columns=['💡 抽出理由・根拠詳細'])
         st.dataframe(display_df, use_container_width=True)
         
@@ -148,16 +165,84 @@ if 'result_df' in st.session_state:
             with st.expander(f"【{row['コード']}】 {row['企業名']} （現在値: {row['現在値']}円 / 出来高倍率: {row['出来高倍率']}倍）"):
                 st.markdown(row['💡 抽出理由・根拠詳細'])
                 
-        # --- CSVダウンロード（判定日を左端列に挿入） ---
+        # --- スクリーニング単体のCSVダウンロード ---
         export_df = res_df.copy()
         export_df.insert(0, '判定日', d_str)
-        csv = export_df.to_csv(index=False).encode('utf-8-sig')
+        csv_screening = export_df.to_csv(index=False).encode('utf-8-sig')
         
-        st.markdown("---")
-        st.subheader("📥 抽出結果データのダウンロード")
         st.download_button(
-            label="📊 抽出結果と理由をCSVでダウンロード",
-            data=csv,
+            label="📊 スクリーニング結果のみをCSVダウンロード",
+            data=csv_screening,
             file_name=f"vcp_screening_result_{d_str}.csv",
             mime="text/csv"
         )
+        
+        # ==============================================================
+        # ⚡ 自動一括トレード検証（バックテスト）セクション
+        # ==============================================================
+        st.markdown("---")
+        st.subheader("⚡ 抽出銘柄のトレード結果・一括検証")
+        st.markdown("抽出された銘柄が**翌営業日寄り付きでエントリー**した後、実際に値上がりしたかを自動検証します。")
+        
+        v_col1, v_col2 = st.columns([1, 2])
+        with v_col1:
+            rrr = st.slider("利確目標のリスク倍率 (RRR)", min_value=1.5, max_value=4.0, value=2.5, step=0.5, key="batch_rrr")
+        with v_col2:
+            st.caption("※ 損切りライン(SL)はピボット価格とATR(20)から自動設定されます。同日中の両到達時は保守的に損切り優先と判定します。")
+            
+        if st.button("🚀 この抽出銘柄のトレード結果を一括検証する", type="secondary"):
+            v_progress = st.progress(0, text="抽出銘柄の推移データを取得中...")
+            val_df = batch_validate_trades(res_df, d_str, risk_reward_ratio=rrr, progress_bar=v_progress)
+            st.session_state['val_df'] = val_df
+            st.session_state['val_d_str'] = d_str
+            
+        # 検証結果の描画
+        if 'val_df' in st.session_state:
+            val_df = st.session_state['val_df']
+            
+            if val_df.empty:
+                st.warning("検証対象のデータがありませんでした。")
+            else:
+                # 最新日付で未来データが無い場合の判定
+                pending_count = len(val_df[val_df['検証ステータス'].str.contains("未到来|待機中")])
+                
+                if pending_count == len(val_df):
+                    st.info(f"⏳ **検証結果**: 設定判定日（{d_str}）以降の相場データが存在しないため、全銘柄が**翌営業日の寄り付き待ち（待機中）**です。相場が開いてデータが更新された後に再度検証を行ってください。")
+                    st.dataframe(val_df[['コード', '企業名', '検証ステータス']], use_container_width=True)
+                else:
+                    # 統計メトリクスの集計
+                    finished_trades = val_df[val_df['勝敗'].isin(['勝ち', '負け'])]
+                    win_trades = val_df[val_df['勝敗'] == '勝ち']
+                    
+                    win_rate = (len(win_trades) / len(finished_trades) * 100) if len(finished_trades) > 0 else 0.0
+                    avg_pnl = val_df['損益(%)'].mean()
+                    
+                    st.markdown("#### 📊 パフォーマンス集計サマリー")
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("検証銘柄数", f"{len(val_df)} 銘柄")
+                    m2.metric("勝率（決済済み）", f"{win_rate:.1f} %", f"{len(win_trades)}勝 / {len(finished_trades)}決済")
+                    m3.metric("全銘柄 平均損益率", f"{avg_pnl:+.2f} %")
+                    active_count = len(val_df[val_df['勝敗'] == '保有中'])
+                    m4.metric("現在保有中", f"{active_count} 銘柄")
+                    
+                    st.markdown("#### 📋 銘柄別検証結果一覧")
+                    st.dataframe(val_df, use_container_width=True)
+                    
+                    # --- スクリーニング根拠 ＋ トレード検証結果 の完全突合CSV作成 ---
+                    # コードをキーにして結合
+                    merged_export = pd.merge(
+                        export_df,
+                        val_df[['コード', 'エントリー日', '買値', 'SL価格', 'TP目標', '検証ステータス', '決済日', '損益(%)', '保有日数', '勝敗']],
+                        on='コード',
+                        how='left'
+                    )
+                    
+                    csv_merged = merged_export.to_csv(index=False).encode('utf-8-sig')
+                    
+                    st.download_button(
+                        label="📥 スクリーニング理由 ＆ トレード結果の完全突合CSVをダウンロード",
+                        data=csv_merged,
+                        file_name=f"vcp_trade_validation_merged_{d_str}.csv",
+                        mime="text/csv",
+                        help="スクリーニングの抽出根拠と、エントリー後の実際の株価推移・勝敗結果が1つの表に結合されたCSVです。"
+                    )

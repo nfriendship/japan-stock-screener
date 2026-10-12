@@ -249,3 +249,129 @@ def run_screener_batch(stock_df, target_date_str, progress_bar=None):
         progress_bar.empty()
         
     return pd.DataFrame(results)
+
+def batch_validate_trades(screened_df, signal_date_str, risk_reward_ratio=2.5, progress_bar=None):
+    """
+    スクリーニングで抽出された全銘柄について、翌日寄り付きエントリーからのトレード結果を一括シミュレーションする
+    """
+    if screened_df.empty:
+        return pd.DataFrame()
+        
+    validation_results = []
+    total = len(screened_df)
+    
+    for idx, row in screened_df.iterrows():
+        ticker = row['ティッカー']
+        code = row['コード']
+        name = row['企業名']
+        
+        if progress_bar:
+            progress_bar.progress((idx + 1) / total, text=f"【{idx + 1}/{total}】 {name} ({code}) のトレード推移を検証中...")
+            
+        try:
+            all_df = yf.Ticker(ticker).history(period="2y")
+            if all_df.empty:
+                continue
+                
+            all_df.index = pd.to_datetime(all_df.index).strftime('%Y-%m-%d')
+            past_df = all_df[all_df.index <= signal_date_str]
+            future_df = all_df[all_df.index > signal_date_str]
+            
+            # 未来データが存在しない場合（最新日付で実行された場合）
+            if future_df.empty:
+                validation_results.append({
+                    'コード': code,
+                    'ティッカー': ticker,
+                    '企業名': name,
+                    'エントリー日': "データ未到来",
+                    '買値': np.nan,
+                    'SL価格': np.nan,
+                    'TP目標': np.nan,
+                    '検証ステータス': "⏳ エントリー待機中（翌営業日データ未到来）",
+                    '決済日': "-",
+                    '損益(%)': 0.0,
+                    '保有日数': 0,
+                    '勝敗': "未確定"
+                })
+                continue
+                
+            # シグナル日までのATRとピボットからSLを算出
+            pivot_price = past_df['High'].tail(20).iloc[:-1].max()
+            high_low = past_df['High'] - past_df['Low']
+            high_cp = np.abs(past_df['High'] - past_df['Close'].shift())
+            low_cp = np.abs(past_df['Low'] - past_df['Close'].shift())
+            tr = pd.concat([high_low, high_cp, low_cp], axis=1).max(axis=1)
+            atr20 = tr.rolling(20).mean().iloc[-1]
+            
+            sl_price = max(pivot_price * 0.95, pivot_price - (1.5 * atr20))
+            
+            # 翌営業日寄り付きエントリー
+            entry_date = future_df.index[0]
+            entry_price = future_df['Open'].iloc[0]
+            risk_amount = entry_price - sl_price
+            tp_price = entry_price + (risk_amount * risk_reward_ratio)
+            
+            trade_period_df = future_df.loc[entry_date:]
+            
+            status = "保有中 (Active)"
+            exit_date = trade_period_df.index[-1]
+            exit_price = trade_period_df['Close'].iloc[-1]
+            pnl_pct = ((exit_price - entry_price) / entry_price) * 100
+            hold_days = len(trade_period_df)
+            outcome = "保有中"
+            
+            for d_idx, d_row in trade_period_df.iterrows():
+                d_low = d_row['Low']
+                d_high = d_row['High']
+                
+                hit_sl = d_low <= sl_price
+                hit_tp = d_high >= tp_price
+                
+                # 同日ヒットは保守的に損切り優先
+                if hit_sl and hit_tp:
+                    status = "❌ 損切り (保守判定)"
+                    exit_date = d_idx
+                    exit_price = sl_price
+                    pnl_pct = ((exit_price - entry_price) / entry_price) * 100
+                    hold_days = len(trade_period_df.loc[:d_idx])
+                    outcome = "負け"
+                    break
+                elif hit_sl:
+                    status = "❌ 損切り (SL達成)"
+                    exit_date = d_idx
+                    exit_price = sl_price
+                    pnl_pct = ((exit_price - entry_price) / entry_price) * 100
+                    hold_days = len(trade_period_df.loc[:d_idx])
+                    outcome = "負け"
+                    break
+                elif hit_tp:
+                    status = "🎯 利確達成 (TP到達)"
+                    exit_date = d_idx
+                    exit_price = tp_price
+                    pnl_pct = ((exit_price - entry_price) / entry_price) * 100
+                    hold_days = len(trade_period_df.loc[:d_idx])
+                    outcome = "勝ち"
+                    break
+                    
+            validation_results.append({
+                'コード': code,
+                'ティッカー': ticker,
+                '企業名': name,
+                'エントリー日': entry_date,
+                '買値': round(entry_price, 1),
+                'SL価格': round(sl_price, 1),
+                'TP目標': round(tp_price, 1),
+                '検証ステータス': status,
+                '決済日': exit_date,
+                '損益(%)': round(pnl_pct, 2),
+                '保有日数': hold_days,
+                '勝敗': outcome
+            })
+            
+        except Exception as e:
+            continue
+            
+    if progress_bar:
+        progress_bar.empty()
+        
+    return pd.DataFrame(validation_results)
