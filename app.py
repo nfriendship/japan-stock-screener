@@ -139,10 +139,9 @@ if st.button("指定日でのスクリーニングを実行する", type="primar
     progress_bar.empty()
     st.success("解析が完了しました！")
     
-    # セッションステートに結果を保存
+    # セッションステートに保存
     st.session_state['result_df'] = result_df
     st.session_state['target_date_str'] = target_date_str
-    # 検証結果はリセット
     if 'val_df' in st.session_state:
         del st.session_state['val_df']
 
@@ -156,22 +155,22 @@ if 'result_df' in st.session_state:
     if res_df.empty:
         st.warning("条件に一致する銘柄は見つかりませんでした。")
     else:
-        # 画面表示用のテーブル
-        display_df = res_df.drop(columns=['💡 抽出理由・根拠詳細'])
-        st.dataframe(display_df, use_container_width=True)
+        # 画面表示用テーブル（詳細理由列はエクスパンダーで表示）
+        display_cols = ['コード', 'ティッカー', '企業名', '現在値', 'ピボット価格', '状態', '出来高倍率', '20日平均売買代金(億円)']
+        st.dataframe(res_df[display_cols], use_container_width=True)
         
         st.markdown("### 🔍 各銘柄の選定理由・根拠の詳細確認")
         for idx, row in res_df.iterrows():
-            with st.expander(f"【{row['コード']}】 {row['企業名']} （現在値: {row['現在値']}円 / 出来高倍率: {row['出来高倍率']}倍）"):
+            with st.expander(f"【{row['コード']}】 {row['企業名']} （現在値: {row['現在値']}円 / 出来高倍率: {row['出来高倍率']}倍 / 売買代金: {row['20日平均売買代金(億円)']}億円）"):
                 st.markdown(row['💡 抽出理由・根拠詳細'])
                 
-        # --- スクリーニング単体のCSVダウンロード ---
+        # --- スクリーニング単体のCSVダウンロード（全指標入り） ---
         export_df = res_df.copy()
         export_df.insert(0, '判定日', d_str)
         csv_screening = export_df.to_csv(index=False).encode('utf-8-sig')
         
         st.download_button(
-            label="📊 スクリーニング結果のみをCSVダウンロード",
+            label="📊 スクリーニング結果（全指標入り）をCSVダウンロード",
             data=csv_screening,
             file_name=f"vcp_screening_result_{d_str}.csv",
             mime="text/csv"
@@ -182,16 +181,16 @@ if 'result_df' in st.session_state:
         # ==============================================================
         st.markdown("---")
         st.subheader("⚡ 抽出銘柄のトレード結果・一括検証")
-        st.markdown("抽出された銘柄が**翌営業日寄り付きでエントリー**した後、実際に値上がりしたかを自動検証します。")
+        st.markdown("抽出された全銘柄について、**翌営業日寄り付きでエントリーした後の売買結果・現在の含み損益** を検証します。")
         
         v_col1, v_col2 = st.columns([1, 2])
         with v_col1:
             rrr = st.slider("利確目標のリスク倍率 (RRR)", min_value=1.5, max_value=4.0, value=2.5, step=0.5, key="batch_rrr")
         with v_col2:
-            st.caption("※ 損切りライン(SL)はピボット価格とATR(20)から自動設定されます。同日中の両到達時は保守的に損切り優先と判定します。")
+            st.caption("※ 損切りライン(SL)はピボット価格とATR(20)から自動設定されます（買値より下を完全保証）。同日両到達時は保守的に損切り優先と判定します。")
             
         if st.button("🚀 この抽出銘柄のトレード結果を一括検証する", type="secondary"):
-            v_progress = st.progress(0, text="抽出銘柄の推移データを取得中...")
+            v_progress = st.progress(0, text="抽出銘柄の推移データを一括取得中...")
             val_df = batch_validate_trades(res_df, d_str, risk_reward_ratio=rrr, progress_bar=v_progress)
             st.session_state['val_df'] = val_df
             st.session_state['val_d_str'] = d_str
@@ -203,7 +202,6 @@ if 'result_df' in st.session_state:
             if val_df.empty:
                 st.warning("検証対象のデータがありませんでした。")
             else:
-                # 最新日付で未来データが無い場合の判定
                 pending_count = len(val_df[val_df['検証ステータス'].str.contains("未到来|待機中")])
                 
                 if pending_count == len(val_df):
@@ -215,34 +213,38 @@ if 'result_df' in st.session_state:
                     win_trades = val_df[val_df['勝敗'] == '勝ち']
                     
                     win_rate = (len(win_trades) / len(finished_trades) * 100) if len(finished_trades) > 0 else 0.0
-                    avg_pnl = val_df['損益(%)'].mean()
+                    avg_pnl = val_df['損益率(%)'].mean()
+                    total_pnl_yen = val_df['損益額(円)'].sum()
+                    active_count = len(val_df[val_df['勝敗'] == '保有中'])
                     
                     st.markdown("#### 📊 パフォーマンス集計サマリー")
                     m1, m2, m3, m4 = st.columns(4)
                     m1.metric("検証銘柄数", f"{len(val_df)} 銘柄")
                     m2.metric("勝率（決済済み）", f"{win_rate:.1f} %", f"{len(win_trades)}勝 / {len(finished_trades)}決済")
                     m3.metric("全銘柄 平均損益率", f"{avg_pnl:+.2f} %")
-                    active_count = len(val_df[val_df['勝敗'] == '保有中'])
-                    m4.metric("現在保有中", f"{active_count} 銘柄")
+                    m4.metric("現在保有中（含み推移）", f"{active_count} 銘柄", f"合計損益: {total_pnl_yen:+.1f}円")
                     
-                    st.markdown("#### 📋 銘柄別検証結果一覧")
-                    st.dataframe(val_df, use_container_width=True)
+                    st.markdown("#### 📋 銘柄別トレード結果一覧（売買価格・損益詳細）")
+                    # 画面表示用テーブル
+                    val_display_cols = [
+                        'コード', '企業名', 'エントリー日', '買値(エントリー)', '売値(決済/現在値)', 
+                        'SL価格', 'TP目標', '検証ステータス', '決済日/現在日', '損益額(円)', '損益率(%)', '保有日数'
+                    ]
+                    st.dataframe(val_df[val_display_cols], use_container_width=True)
                     
-                    # --- スクリーニング根拠 ＋ トレード検証結果 の完全突合CSV作成 ---
-                    # コードをキーにして結合
-                    merged_export = pd.merge(
-                        export_df,
-                        val_df[['コード', 'エントリー日', '買値', 'SL価格', 'TP目標', '検証ステータス', '決済日', '損益(%)', '保有日数', '勝敗']],
-                        on='コード',
-                        how='left'
-                    )
+                    # --- スクリーニング条件指標 ＋ トレード結果 の完全突合CSV作成 ---
+                    # 企業名などの重複列を除いてコードをキーに結合
+                    val_subset = val_df.drop(columns=['企業名', 'ティッカー'], errors='ignore')
+                    merged_export = pd.merge(export_df, val_subset, on='コード', how='left')
                     
                     csv_merged = merged_export.to_csv(index=False).encode('utf-8-sig')
                     
+                    st.markdown("---")
+                    st.subheader("📥 スクリーニング指標 ＆ 売買結果の完全突合CSV")
                     st.download_button(
-                        label="📥 スクリーニング理由 ＆ トレード結果の完全突合CSVをダウンロード",
+                        label="📊 全テクニカル指標 ＆ トレード結果の完全突合CSVをダウンロード",
                         data=csv_merged,
                         file_name=f"vcp_trade_validation_merged_{d_str}.csv",
                         mime="text/csv",
-                        help="スクリーニングの抽出根拠と、エントリー後の実際の株価推移・勝敗結果が1つの表に結合されたCSVです。"
+                        help="スクリーニング時の全指標（出来高倍率、各SMA、売買代金等）と、実際の売買価格・損益結果が1行に結合されたCSVです。アルゴリズム改善の要因分析にそのまま活用できます。"
                     )

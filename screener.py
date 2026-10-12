@@ -5,19 +5,12 @@ from datetime import datetime, timedelta
 
 def get_tse_stock_list():
     """
-    東証プライムおよびスタンダード市場の主要な投資対象・流動性銘柄（約2,000〜3,000銘柄規模）のリストを返す
+    東証プライムおよびスタンダード市場の主要な投資対象・流動性銘柄のリストを返す
     """
     base_codes = []
     ranges = [
-        (1301, 1999), # 水産・農林、鉱業、建設
-        (2001, 2999), # 食品、繊維、パルプ・紙、化学
-        (3001, 3999), # 医薬品、石油・石炭、ゴム、ガラス・土石、鉄鋼、金属
-        (4001, 4999), # 化学、医薬品
-        (5001, 5999), # 石油、ゴム、ガラス、鉄鋼、非鉄金属
-        (6001, 6999), # 金属製品、機械、電気機器、輸送用機器、精密機器
-        (7001, 7999), # 機械、電気、輸送用機器、精密、その他製品
-        (8001, 8999), # 商社、小売、銀行、証券、保険、不動産
-        (9001, 9997)  # 陸運、海運、空運、倉庫、情報・通信、電力・ガス、サービス
+        (1301, 1999), (2001, 2999), (3001, 3999), (4001, 4999),
+        (5001, 5999), (6001, 6999), (7001, 7999), (8001, 8999), (9001, 9997)
     ]
     
     specific_tickers = [
@@ -106,7 +99,7 @@ def analyze_market(target_date_str):
 
 def run_screener_batch(stock_df, target_date_str, progress_bar=None):
     """
-    指定された判定日時点のデータを用いてスクリーニングを実行する。
+    指定された判定日時点のデータを用いてスクリーニングを実行し、全テクニカル指標の数値を保持する
     """
     tickers = stock_df['Ticker'].tolist()
     total_stock_count = len(tickers)
@@ -208,6 +201,8 @@ def run_screener_batch(stock_df, target_date_str, progress_bar=None):
                 
             vol_ratio = current_vol / avg_vol_20 if avg_vol_20 > 0 else 0
             dist_from_pivot = ((current_close - pivot_price) / pivot_price) * 100
+            diff_from_high_52w = ((current_close - high_52w) / high_52w) * 100
+            rise_from_low_52w = ((current_close - low_52w) / low_52w) * 100
             
             match_row = stock_df[stock_df['Ticker'] == ticker]
             code = match_row['Code'].values[0] if not match_row.empty else ticker.replace('.T', '')
@@ -237,8 +232,19 @@ def run_screener_batch(stock_df, target_date_str, progress_bar=None):
                 '企業名': name,
                 '現在値': current_close,
                 'ピボット価格': round(pivot_price, 1),
+                'ピボット乖離率(%)': round(dist_from_pivot, 2),
                 '状態': status_label,
                 '出来高倍率': round(vol_ratio, 2),
+                '当日出来高': int(current_vol),
+                '20日平均出来高': int(avg_vol_20),
+                '20日平均売買代金(億円)': round(avg_turnover / 100000000, 2),
+                'SMA50': round(sma50, 1),
+                'SMA150': round(sma150, 1),
+                'SMA200': round(sma200, 1),
+                '52週高値': round(high_52w, 1),
+                '52週安値': round(low_52w, 1),
+                '52週高値乖離率(%)': round(diff_from_high_52w, 2),
+                '52週安値上昇率(%)': round(rise_from_low_52w, 2),
                 '💡 抽出理由・根拠詳細': reason_detail
             })
             
@@ -252,13 +258,36 @@ def run_screener_batch(stock_df, target_date_str, progress_bar=None):
 
 def batch_validate_trades(screened_df, signal_date_str, risk_reward_ratio=2.5, progress_bar=None):
     """
-    スクリーニングで抽出された全銘柄について、翌日寄り付きエントリーからのトレード結果を一括シミュレーションする
+    スクリーニング抽出銘柄を一括ダウンロードで高速取得し、安全なSL/TP設定のもとトレード結果を判定する
     """
     if screened_df.empty:
         return pd.DataFrame()
         
+    tickers = screened_df['ティッカー'].tolist()
+    total = len(tickers)
+    
+    if progress_bar:
+        progress_bar.progress(0.1, text=f"検証対象 {total} 銘柄の株価データを一括ダウンロード中...")
+        
+    # レートリミットを回避するため、全銘柄を一括高速ダウンロード
+    all_data = {}
+    try:
+        df_batch = yf.download(tickers, period="2y", group_by='ticker', threads=True, progress=False)
+        if not df_batch.empty:
+            for t in tickers:
+                try:
+                    if len(tickers) == 1:
+                        sub_df = df_batch.dropna(how='all')
+                    else:
+                        sub_df = df_batch[t].dropna(how='all')
+                    if not sub_df.empty:
+                        all_data[t] = sub_df
+                except:
+                    continue
+    except Exception as e:
+        pass
+        
     validation_results = []
-    total = len(screened_df)
     
     for idx, row in screened_df.iterrows():
         ticker = row['ティッカー']
@@ -266,16 +295,17 @@ def batch_validate_trades(screened_df, signal_date_str, risk_reward_ratio=2.5, p
         name = row['企業名']
         
         if progress_bar:
-            progress_bar.progress((idx + 1) / total, text=f"【{idx + 1}/{total}】 {name} ({code}) のトレード推移を検証中...")
+            prog_val = 0.3 + (0.7 * ((idx + 1) / total))
+            progress_bar.progress(min(prog_val, 1.0), text=f"【{idx + 1}/{total}】 {name} のトレード推移を解析中...")
+            
+        df = all_data.get(ticker)
+        if df is None or df.empty:
+            continue
             
         try:
-            all_df = yf.Ticker(ticker).history(period="2y")
-            if all_df.empty:
-                continue
-                
-            all_df.index = pd.to_datetime(all_df.index).strftime('%Y-%m-%d')
-            past_df = all_df[all_df.index <= signal_date_str]
-            future_df = all_df[all_df.index > signal_date_str]
+            df.index = pd.to_datetime(df.index).strftime('%Y-%m-%d')
+            past_df = df[df.index <= signal_date_str]
+            future_df = df[df.index > signal_date_str]
             
             # 未来データが存在しない場合（最新日付で実行された場合）
             if future_df.empty:
@@ -283,43 +313,60 @@ def batch_validate_trades(screened_df, signal_date_str, risk_reward_ratio=2.5, p
                     'コード': code,
                     'ティッカー': ticker,
                     '企業名': name,
-                    'エントリー日': "データ未到来",
-                    '買値': np.nan,
+                    'エントリー日': "翌営業日待ち",
+                    '買値(エントリー)': np.nan,
+                    '売値(決済/現在値)': np.nan,
                     'SL価格': np.nan,
                     'TP目標': np.nan,
                     '検証ステータス': "⏳ エントリー待機中（翌営業日データ未到来）",
-                    '決済日': "-",
-                    '損益(%)': 0.0,
+                    '決済日/現在日': "-",
+                    '損益額(円)': 0.0,
+                    '損益率(%)': 0.0,
                     '保有日数': 0,
                     '勝敗': "未確定"
                 })
                 continue
                 
-            # シグナル日までのATRとピボットからSLを算出
+            # ATR(20)の算出
             pivot_price = past_df['High'].tail(20).iloc[:-1].max()
             high_low = past_df['High'] - past_df['Low']
             high_cp = np.abs(past_df['High'] - past_df['Close'].shift())
             low_cp = np.abs(past_df['Low'] - past_df['Close'].shift())
             tr = pd.concat([high_low, high_cp, low_cp], axis=1).max(axis=1)
             atr20 = tr.rolling(20).mean().iloc[-1]
-            
-            sl_price = max(pivot_price * 0.95, pivot_price - (1.5 * atr20))
-            
-            # 翌営業日寄り付きエントリー
+            if pd.isna(atr20) or atr20 <= 0:
+                atr20 = past_df['Close'].iloc[-1] * 0.02
+                
+            # 翌営業日寄り付きでエントリー
             entry_date = future_df.index[0]
             entry_price = future_df['Open'].iloc[0]
+            
+            # === SL価格の安全設計（買値との逆転防止ガード） ===
+            calc_sl = max(pivot_price * 0.95, pivot_price - (1.5 * atr20))
+            # SLは必ず買値未満でなければならない（最大損失幅は買値の-7%、またはATR×1.5）
+            sl_price = min(calc_sl, entry_price - (1.5 * atr20), entry_price * 0.95)
+            
             risk_amount = entry_price - sl_price
+            if risk_amount <= 0:
+                risk_amount = entry_price * 0.05
+                sl_price = entry_price - risk_amount
+                
             tp_price = entry_price + (risk_amount * risk_reward_ratio)
             
             trade_period_df = future_df.loc[entry_date:]
             
-            status = "保有中 (Active)"
+            # 保有中を初期値に設定
+            current_last_close = trade_period_df['Close'].iloc[-1]
+            pnl_amount = current_last_close - entry_price
+            pnl_pct = (pnl_amount / entry_price) * 100
+            
+            status = f"⏳ 保有中 ({'含み益' if pnl_amount >= 0 else '含み損'})"
             exit_date = trade_period_df.index[-1]
-            exit_price = trade_period_df['Close'].iloc[-1]
-            pnl_pct = ((exit_price - entry_price) / entry_price) * 100
+            exit_price = current_last_close
             hold_days = len(trade_period_df)
             outcome = "保有中"
             
+            # 日足のシミュレーション
             for d_idx, d_row in trade_period_df.iterrows():
                 d_low = d_row['Low']
                 d_high = d_row['High']
@@ -327,20 +374,21 @@ def batch_validate_trades(screened_df, signal_date_str, risk_reward_ratio=2.5, p
                 hit_sl = d_low <= sl_price
                 hit_tp = d_high >= tp_price
                 
-                # 同日ヒットは保守的に損切り優先
                 if hit_sl and hit_tp:
-                    status = "❌ 損切り (保守判定)"
+                    status = "❌ 損切り (同日到達・保守判定)"
                     exit_date = d_idx
                     exit_price = sl_price
-                    pnl_pct = ((exit_price - entry_price) / entry_price) * 100
+                    pnl_amount = exit_price - entry_price
+                    pnl_pct = (pnl_amount / entry_price) * 100
                     hold_days = len(trade_period_df.loc[:d_idx])
                     outcome = "負け"
                     break
                 elif hit_sl:
-                    status = "❌ 損切り (SL達成)"
+                    status = "❌ 損切り (SL到達)"
                     exit_date = d_idx
                     exit_price = sl_price
-                    pnl_pct = ((exit_price - entry_price) / entry_price) * 100
+                    pnl_amount = exit_price - entry_price
+                    pnl_pct = (pnl_amount / entry_price) * 100
                     hold_days = len(trade_period_df.loc[:d_idx])
                     outcome = "負け"
                     break
@@ -348,7 +396,8 @@ def batch_validate_trades(screened_df, signal_date_str, risk_reward_ratio=2.5, p
                     status = "🎯 利確達成 (TP到達)"
                     exit_date = d_idx
                     exit_price = tp_price
-                    pnl_pct = ((exit_price - entry_price) / entry_price) * 100
+                    pnl_amount = exit_price - entry_price
+                    pnl_pct = (pnl_amount / entry_price) * 100
                     hold_days = len(trade_period_df.loc[:d_idx])
                     outcome = "勝ち"
                     break
@@ -358,12 +407,14 @@ def batch_validate_trades(screened_df, signal_date_str, risk_reward_ratio=2.5, p
                 'ティッカー': ticker,
                 '企業名': name,
                 'エントリー日': entry_date,
-                '買値': round(entry_price, 1),
+                '買値(エントリー)': round(entry_price, 1),
+                '売値(決済/現在値)': round(exit_price, 1),
                 'SL価格': round(sl_price, 1),
                 'TP目標': round(tp_price, 1),
                 '検証ステータス': status,
-                '決済日': exit_date,
-                '損益(%)': round(pnl_pct, 2),
+                '決済日/現在日': exit_date,
+                '損益額(円)': round(pnl_amount, 1),
+                '損益率(%)': round(pnl_pct, 2),
                 '保有日数': hold_days,
                 '勝敗': outcome
             })
