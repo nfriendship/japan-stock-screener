@@ -20,7 +20,7 @@ st.markdown("""
         color: #f0f6fc !important;
     }
     
-    /* 右上のヘッダー（Stop、Deploy、点3つボタンなど）の背景を黒くし、文字を白くして確実に見えるようにする */
+    /* 右上のヘッダー（Stop、Deploy、点3つボタンなど）の背景を黒くし、文字を白くする */
     header[data-testid="stHeader"] {
         background-color: #0e1117 !important;
     }
@@ -34,14 +34,24 @@ st.markdown("""
         color: #f0f6fc !important;
     }
     section[data-testid="stSidebar"] label, 
-    section[data-testid="stSidebar"] span, 
-    section[data-testid="stSidebar"] div {
+    section[data-testid="stSidebar"] span {
         color: #f0f6fc !important;
     }
     
-    /* 判定日などの入力ボックス内の文字を黒く見やすく調整 */
-    input {
-        color: #000000 !important;
+    /* 【超重要】サイドバー内の入力ボックス（日付・テキスト）の視認性対策 */
+    /* 背景を白、文字色をはっきりとした黒に固定 */
+    section[data-testid="stSidebar"] input,
+    div[data-testid="stDateInput"] input,
+    div[data-baseweb="input"] input {
+        background-color: #ffffff !important;
+        color: #111111 !important;
+        -webkit-text-fill-color: #111111 !important;
+        font-weight: 600 !important;
+    }
+
+    /* 入力ボックスの外枠コンテナの文字色・背景色も同期 */
+    div[data-baseweb="input"] {
+        background-color: #ffffff !important;
     }
     
     /* CSVダウンロードボタンの視認性改善 */
@@ -63,7 +73,7 @@ st.markdown("""
         color: #f0f6fc !important;
     }
     
-    /* エキスパンダー（詳細確認）の背景・文字色調整 */
+    /* エキスパンダーの調整 */
     details {
         background-color: #161b22 !important;
         border: 1px solid #30363d !important;
