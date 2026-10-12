@@ -16,7 +16,7 @@ st.markdown("""
     }
     
     /* メインエリア内の見出しやテキストを明るく */
-    .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6, .stApp p, .stApp label {
+    .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6, .stApp p {
         color: #f0f6fc !important;
     }
     
@@ -28,27 +28,33 @@ st.markdown("""
         color: #f0f6fc !important;
     }
     
-    /* サイドバー全体の背景と文字色 */
+    /* ============================================================== */
+    /* 📌 サイドバー全体の背景とラベル視認性の向上 */
+    /* ============================================================== */
     section[data-testid="stSidebar"] {
         background-color: #161b22;
         color: #f0f6fc !important;
     }
-    section[data-testid="stSidebar"] label, 
-    section[data-testid="stSidebar"] span {
-        color: #f0f6fc !important;
+    /* 「判定基準日（この日までのデータで判定）」などのラベル文字を完全な白で強調 */
+    section[data-testid="stSidebar"] label,
+    section[data-testid="stSidebar"] label p,
+    section[data-testid="stSidebar"] label span,
+    section[data-testid="stSidebar"] [data-testid="stWidgetLabel"] *,
+    div[data-testid="stDateInput"] label,
+    div[data-testid="stDateInput"] label * {
+        color: #ffffff !important;
+        -webkit-text-fill-color: #ffffff !important;
+        font-size: 0.95rem !important;
+        font-weight: 600 !important;
     }
     
-    /* 日付入力枠（stDateInput）の内部を完全黒文字化 */
+    /* 日付入力ボックス内部の文字（黒文字・太字） */
     div[data-testid="stDateInput"] {
         background-color: transparent !important;
     }
     div[data-testid="stDateInput"] div[data-baseweb="input"],
     div[data-testid="stDateInput"] div[data-baseweb="base-input"] {
         background-color: #ffffff !important;
-    }
-    div[data-testid="stDateInput"] * {
-        color: #000000 !important;
-        -webkit-text-fill-color: #000000 !important;
     }
     div[data-testid="stDateInput"] input {
         background-color: #ffffff !important;
@@ -73,55 +79,71 @@ st.markdown("""
     }
     
     /* ============================================================== */
-    /* 🎨 各種ボタンの視認性最適化（背景色 ＆ 内部テキスト強制白文字） */
+    /* 🎨 各種ボタンの視認性最適化（階層差に強いセレクタ設計） */
     /* ============================================================== */
     
     /* 1. 一括検証ボタン（ブルー系） */
-    div[data-testid="stButton"] > button {
+    div[data-testid="stButton"] button,
+    div.stButton button {
         background-color: #1f6feb !important;
+        background: #1f6feb !important;
         border: 1px solid #388bfd !important;
         border-radius: 6px !important;
         box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4) !important;
     }
-    div[data-testid="stButton"] > button:hover {
+    div[data-testid="stButton"] button:hover,
+    div.stButton button:hover {
         background-color: #388bfd !important;
+        background: #388bfd !important;
         border-color: #58a6ff !important;
     }
-    div[data-testid="stButton"] > button,
-    div[data-testid="stButton"] > button * {
+    div[data-testid="stButton"] button *,
+    div.stButton button * {
         color: #ffffff !important;
         -webkit-text-fill-color: #ffffff !important;
         font-weight: bold !important;
     }
     
     /* 2. スクリーニング実行ボタン（プライマリ・レッド系） */
-    div[data-testid="stButton"] > button[kind="primary"] {
+    div[data-testid="stButton"] button[kind="primary"],
+    div.stButton button[kind="primary"] {
         background-color: #ff4b4b !important;
+        background: #ff4b4b !important;
         border: 1px solid #ff6b6b !important;
     }
-    div[data-testid="stButton"] > button[kind="primary"]:hover {
+    div[data-testid="stButton"] button[kind="primary"]:hover,
+    div.stButton button[kind="primary"]:hover {
         background-color: #ff6b6b !important;
+        background: #ff6b6b !important;
     }
-    div[data-testid="stButton"] > button[kind="primary"],
-    div[data-testid="stButton"] > button[kind="primary"] * {
+    div[data-testid="stButton"] button[kind="primary"] *,
+    div.stButton button[kind="primary"] * {
         color: #ffffff !important;
         -webkit-text-fill-color: #ffffff !important;
         font-weight: bold !important;
     }
     
-    /* 3. CSVダウンロードボタン（グリーン系） */
-    div[data-testid="stDownloadButton"] > button {
+    /* 3. CSVダウンロードボタン（グリーン系：直下セレクタ > を排除して確実に適用） */
+    div[data-testid="stDownloadButton"] button,
+    div[data-testid="stDownloadButton"] a,
+    div.stDownloadButton button,
+    div.stDownloadButton a {
         background-color: #238636 !important;
+        background: #238636 !important;
         border: 1px solid #3fb950 !important;
         border-radius: 6px !important;
         box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4) !important;
     }
-    div[data-testid="stDownloadButton"] > button:hover {
+    div[data-testid="stDownloadButton"] button:hover,
+    div[data-testid="stDownloadButton"] a:hover,
+    div.stDownloadButton button:hover,
+    div.stDownloadButton a:hover {
         background-color: #2ea043 !important;
+        background: #2ea043 !important;
         border-color: #56d364 !important;
     }
-    div[data-testid="stDownloadButton"] > button,
-    div[data-testid="stDownloadButton"] > button * {
+    div[data-testid="stDownloadButton"] *,
+    div.stDownloadButton * {
         color: #ffffff !important;
         -webkit-text-fill-color: #ffffff !important;
         font-weight: bold !important;
