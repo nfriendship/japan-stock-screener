@@ -1,299 +1,536 @@
-import streamlit as st
+import yfinance as yf
 import pandas as pd
-from datetime import datetime
-from screener import (
-    get_tse_stock_list, analyze_market, run_screener_batch, 
-    batch_validate_trades, clear_all_cache, load_local_cache, STOCK_CACHE_FILE
-)
+import numpy as np
+import time
+import os
+import pickle
+from datetime import datetime, timedelta
 
-# --- ページ設定 ---
-st.set_page_config(page_title="日本株VCP・ブレイクアウトスクリーニングシステム", layout="wide")
+# キャッシュディレクトリの定義
+CACHE_DIR = "cache_data"
+STOCK_CACHE_FILE = os.path.join(CACHE_DIR, "stock_history_cache.pkl")
+MARKET_CACHE_FILE = os.path.join(CACHE_DIR, "market_history_cache.pkl")
 
-# --- 視認性とデザインを最適化したダークテーマCSS ---
-st.markdown("""
-    <style>
-    .stApp {
-        background-color: #0e1117;
-        color: #f0f6fc;
-    }
-    .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6, .stApp p {
-        color: #f0f6fc !important;
-    }
-    header[data-testid="stHeader"] {
-        background-color: #0e1117 !important;
-    }
-    header[data-testid="stHeader"] * {
-        color: #f0f6fc !important;
-    }
-    section[data-testid="stSidebar"] {
-        background-color: #161b22;
-        color: #f0f6fc !important;
-    }
-    section[data-testid="stSidebar"] label,
-    section[data-testid="stSidebar"] label p,
-    section[data-testid="stSidebar"] label span,
-    section[data-testid="stSidebar"] [data-testid="stWidgetLabel"] *,
-    div[data-testid="stDateInput"] label,
-    div[data-testid="stDateInput"] label * {
-        color: #ffffff !important;
-        -webkit-text-fill-color: #ffffff !important;
-        font-size: 0.95rem !important;
-        font-weight: 600 !important;
-    }
-    div[data-testid="stDateInput"] {
-        background-color: transparent !important;
-    }
-    div[data-testid="stDateInput"] div[data-baseweb="input"],
-    div[data-testid="stDateInput"] div[data-baseweb="base-input"] {
-        background-color: #ffffff !important;
-    }
-    div[data-testid="stDateInput"] input {
-        background-color: #ffffff !important;
-        color: #000000 !important;
-        -webkit-text-fill-color: #000000 !important;
-        font-weight: 700 !important;
-    }
-    div[data-testid="metric-container"] {
-        background-color: #1f242d;
-        border: 1px solid #30363d;
-        padding: 12px;
-        border-radius: 8px;
-    }
-    div[data-testid="metric-container"] label {
-        color: #c9d1d9 !important;
-        font-weight: bold !important;
-    }
-    div[data-testid="metric-container"] div[data-testid="stMetricValue"] {
-        color: #58a6ff !important;
-    }
-    div[data-testid="stButton"] button,
-    div.stButton button {
-        background-color: #1f6feb !important;
-        background: #1f6feb !important;
-        border: 1px solid #388bfd !important;
-        border-radius: 6px !important;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4) !important;
-    }
-    div[data-testid="stButton"] button:hover,
-    div.stButton button:hover {
-        background-color: #388bfd !important;
-        border-color: #58a6ff !important;
-    }
-    div[data-testid="stButton"] button *,
-    div.stButton button * {
-        color: #ffffff !important;
-        -webkit-text-fill-color: #ffffff !important;
-        font-weight: bold !important;
-    }
-    div[data-testid="stButton"] button[kind="primary"],
-    div.stButton button[kind="primary"] {
-        background-color: #ff4b4b !important;
-        background: #ff4b4b !important;
-        border: 1px solid #ff6b6b !important;
-    }
-    div[data-testid="stButton"] button[kind="primary"]:hover {
-        background-color: #ff6b6b !important;
-    }
-    div[data-testid="stButton"] button[kind="primary"] *,
-    div.stButton button[kind="primary"] * {
-        color: #ffffff !important;
-        -webkit-text-fill-color: #ffffff !important;
-        font-weight: bold !important;
-    }
-    div[data-testid="stDownloadButton"] button,
-    div[data-testid="stDownloadButton"] a,
-    div.stDownloadButton button,
-    div.stDownloadButton a {
-        background-color: #238636 !important;
-        background: #238636 !important;
-        border: 1px solid #3fb950 !important;
-        border-radius: 6px !important;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4) !important;
-    }
-    div[data-testid="stDownloadButton"] button:hover,
-    div[data-testid="stDownloadButton"] a:hover {
-        background-color: #2ea043 !important;
-        border-color: #56d364 !important;
-    }
-    div[data-testid="stDownloadButton"] *,
-    div.stDownloadButton * {
-        color: #ffffff !important;
-        -webkit-text-fill-color: #ffffff !important;
-        font-weight: bold !important;
-    }
-    dataframe, table {
-        background-color: #161b22 !important;
-        color: #f0f6fc !important;
-    }
-    details {
-        background-color: #161b22 !important;
-        border: 1px solid #30363d !important;
-        border-radius: 8px;
-        padding: 5px;
-    }
-    details summary p {
-        color: #58a6ff !important;
-        font-weight: bold;
-    }
-    </style>
-""", unsafe_allow_html=True)
+def ensure_cache_dir():
+    """キャッシュ用フォルダが存在しない場合は自動作成する"""
+    if not os.path.exists(CACHE_DIR):
+        os.makedirs(CACHE_DIR, exist_ok=True)
 
-st.title("📈 株式買い候補銘柄 自動抽出システム")
-st.markdown("東証の主要個別銘柄（ETF除外）に基づき、アルゴリズムでブレイクアウト銘柄を抽出します。")
+def load_local_cache(cache_file):
+    """キャッシュファイルを読み込む"""
+    ensure_cache_dir()
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, "rb") as f:
+                return pickle.load(f)
+        except Exception:
+            return {}
+    return {}
 
-# --- サイドバー：実行設定 ＆ キャッシュ操作 ---
-st.sidebar.header("⚙ 実行設定")
-target_date = st.sidebar.date_input("判定基準日（この日までのデータで判定）", value=datetime.today().date())
-target_date_str = target_date.strftime('%Y-%m-%d')
+def save_local_cache(cache_file, data_dict):
+    """キャッシュファイルに保存する"""
+    ensure_cache_dir()
+    try:
+        with open(cache_file, "wb") as f:
+            pickle.dump(data_dict, f)
+    except Exception:
+        pass
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("💾 データ取得・キャッシュ設定")
-data_mode = st.sidebar.radio(
-    "取得モード",
-    ["⚡ 高速キャッシュ優先（バックテスト推奨）", "🔄 ライブ最新データを強制取得（更新）"],
-    help="「高速キャッシュ優先」を選択すると、一度保存されたデータを再利用するためYahooへのリクエストを送らず、制限（429エラー）なしで数秒で実行できます。"
-)
-use_cache = "高速キャッシュ優先" in data_mode
+def clear_all_cache():
+    """キャッシュを初期化する"""
+    if os.path.exists(STOCK_CACHE_FILE):
+        try:
+            os.remove(STOCK_CACHE_FILE)
+        except:
+            pass
+    if os.path.exists(MARKET_CACHE_FILE):
+        try:
+            os.remove(MARKET_CACHE_FILE)
+        except:
+            pass
 
-# 現在のキャッシュ件数を表示
-current_cache = load_local_cache(STOCK_CACHE_FILE)
-st.sidebar.caption(f"📦 現在保存中のキャッシュ: **{len(current_cache)} 銘柄分**")
+def get_tse_stock_list():
+    """
+    東証の全セクター・個別株（約3,000銘柄規模）を生成。ETFは除外。
+    """
+    major_companies = {
+        "7203": "トヨタ自動車", "6758": "ソニーグループ", "9984": "ソフトバンクグループ", "8306": "三菱UFJフィナンシャルG",
+        "6861": "キーエンス", "6594": "ニデック", "9432": "日本電信電話", "8035": "東京エレクトロン",
+        "4063": "信越化学工業", "6098": "リクルートホールディングス", "4568": "第一三共", "6902": "デンソー",
+        "7974": "任天堂", "4661": "オリエンタルランド", "8766": "東京海上ホールディングス", "2914": "日本たばこ産業",
+        "6273": "SMC", "6367": "ダイキン工業", "6981": "村田製作所", "7741": "HOYA",
+        "4502": "武田薬品工業", "4543": "テルモ", "5108": "ブリヂストン", "3382": "セブン＆アイ・ホールディングス",
+        "8267": "イオン", "9020": "東日本旅客鉄道", "9022": "東海旅客鉄道", "9433": "KDDI",
+        "9983": "ファーストリテイリング", "6301": "小松製作所", "6501": "日立製作所", "7267": "本田技研工業",
+        "3101": "東洋紡", "3103": "ユニチカ", "3407": "旭化成", "3402": "東レ",
+        "5401": "日本製鉄", "5711": "三菱マテリアル", "5801": "古河電気工業", "6701": "日本電気",
+        "8001": "伊藤忠商事", "8031": "三井物産", "8058": "三菱商事", "8002": "丸紅",
+        "8053": "住友商事", "8316": "三井住友フィナンシャルG", "8411": "みずほフィナンシャルG", "8253": "クレディセゾン",
+        "8591": "オリックス", "8750": "第一生命ホールディングス", "8725": "MS&ADインシュアランスG", "8308": "りそなホールディングス",
+        "8473": "SBIホールディングス", "4188": "三菱ケミカルグループ", "4208": "UBE", "4452": "花王",
+        "4911": "資生堂", "4005": "住友化学", "4183": "三井化学", "4204": "積水化学工業",
+        "4523": "エーザイ", "4519": "中外製薬", "4578": "大塚ホールディングス", "4503": "アステラス製薬",
+        "4507": "塩野義製薬", "4536": "参天製薬", "4587": "ペプチドリーム", "4528": "小野薬品工業",
+        "6326": "クボタ", "6146": "ディスコ", "6383": "ダイフク", "6305": "日立建機",
+        "6201": "豊田自動織機", "6471": "日本精工", "6479": "ミネベアミツミ", "5411": "JFEホールディングス",
+        "5713": "住友金属鉱山", "5802": "住友電気工業", "5020": "ENEOSホールディングス", "5019": "出光興産",
+        "5901": "東洋製罐グループHD", "5631": "日本製鋼所", "2802": "味の素", "2502": "アサヒグループHD",
+        "2503": "キリンホールディングス", "2801": "キッコーマン", "3099": "三越伊勢丹HD", "8233": "高島屋",
+        "2651": "ローソン", "1925": "大和ハウス工業", "1928": "積水ハウス", "1801": "大成建設",
+        "1802": "大林組", "1812": "鹿島建設", "8801": "三井不動産", "8802": "三菱地所",
+        "8830": "住友不動産", "3289": "東急不動産HD", "3003": "ヒューリック", "9101": "日本郵船",
+        "9104": "商船三井", "9107": "川崎汽船", "9202": "ANAホールディングス", "9201": "日本航空",
+        "9064": "ヤマトホールディングス", "9042": "阪急阪神HD", "9735": "セコム", "2433": "博報堂DY HD",
+        "4684": "オービック", "4732": "ユー・エス・エス", "2371": "カカクコム", "3659": "ネクソン",
+        "4751": "サイバーエージェント", "2181": "パーソルHD", "3116": "トヨタ紡織", "3132": "マクニカHD",
+        "3150": "グリムス", "3197": "すかいらーくHD", "3231": "野村不動産HD", "3291": "飯田グループHD",
+        "3436": "SUMCO", "3563": "FOOD & LIFE COMPANIES", "3660": "アイスタイル", "3697": "SHIFT",
+        "3769": "GMOペイメントゲートウェイ", "3861": "王子ホールディングス", "3863": "日本製紙", "4004": "レゾナックHD",
+        "4021": "日産化学", "4042": "東ソー", "4043": "トクヤマ", "4061": "デンカ",
+        "4151": "協和キリン", "4272": "日本化薬", "4324": "電通グループ", "4344": "ソースネクスト",
+        "5191": "住友理工", "5201": "AGC", "5214": "日本電気硝子", "5232": "住友大阪セメント",
+        "5332": "TOTO", "5333": "日本ガイシ", "5334": "日本特殊陶業", "5406": "神戸製鋼所",
+        "5541": "大平洋金属", "5706": "三井金属鉱業", "5714": "DOWA HD", "5803": "フジクラ",
+        "6103": "オークマ", "6113": "アマダ", "6268": "ナブテスコ", "6370": "栗田工業",
+        "6436": "アマノ", "6448": "ブラザー工業", "6460": "セガサミーHD", "6481": "THK",
+        "6504": "富士電機", "6506": "安川電機", "6586": "マキタ", "6674": "GSユアサ",
+        "6703": "沖電気工業", "6727": "ワコム", "6753": "シャープ", "6770": "アルプスアルパイン",
+        "6845": "アズビル", "6869": "シスメックス", "6971": "京セラ", "6976": "太陽誘電",
+        "7011": "三菱重工業", "7012": "川崎重工業", "7186": "コンコルディアFG", "7201": "日産自動車",
+        "7202": "いすゞ自動車", "7205": "日野自動車", "7211": "三菱自動車工業", "7272": "ヤマハ発動機",
+        "7731": "ニコン", "7733": "オリンパス", "7735": "SCREEN HD", "7832": "バンダイナムコHD",
+        "7911": "TOPPAN HD", "7912": "大日本印刷", "7951": "ヤマハ", "8056": "BIPROGY",
+        "8088": "岩谷産業", "8113": "ユニ・チャーム", "8601": "大和証券グループ本社", "8604": "野村ホールディングス",
+        "8697": "日本取引所グループ", "9001": "東武鉄道", "9005": "東急", "9007": "小田急電鉄",
+        "9041": "近鉄グループHD", "9142": "九州旅客鉄道", "9501": "東京電力HD", "9502": "中部電力",
+        "9503": "関西電力", "9531": "東京瓦斯", "9532": "大阪瓦斯", "9602": "東宝",
+        "9706": "日本空港ビルデング", "9716": "乃村工藝社", "9766": "コナミグループ", "9843": "ニトリHD"
+    }
 
-if st.sidebar.button("🗑 キャッシュを全消去して初期化"):
-    clear_all_cache()
-    st.sidebar.success("キャッシュを消去しました。")
-    st.rerun()
-
-st.info(f"📅 設定中の判定日: **{target_date_str}** ｜ モード: **{'キャッシュ高速実行' if use_cache else 'ライブ通信更新'}**")
-
-# --- 市場環境判定の表示 ---
-market_status, market_msg = analyze_market(target_date_str, use_cache=use_cache)
-if "Risk-On" in market_status:
-    st.success(f"【市場環境：Risk-On】 {market_msg}")
-elif "Risk-Off" in market_status:
-    st.warning(f"【市場環境：Risk-Off】 {market_msg}")
-else:
-    st.info(f"【市場環境：Neutral】 {market_msg}")
-
-st.markdown("---")
-
-# --- スクリーニング実行 ---
-if st.button("指定日でのスクリーニングを実行する", type="primary"):
-    progress_bar = st.progress(0, text="市場データを取得準備中...")
+    individual_1000s = [
+        "1301", "1332", "1333", "1375", "1376", "1377", "1379", "1407", "1414", "1417",
+        "1419", "1429", "1430", "1433", "1435", "1447", "1448", "1514", "1515", "1518",
+        "1605", "1662", "1663"
+    ]
     
-    with st.spinner("東証個別銘柄リストを準備中..."):
-        stock_df = get_tse_stock_list()
-        
-    with st.spinner("スクリーニングを実行中..."):
-        result_df, meta_stats = run_screener_batch(stock_df, target_date_str, use_cache=use_cache, progress_bar=progress_bar)
-        
-    progress_bar.empty()
-    st.success("解析が完了しました！")
+    ranges = [
+        (1712, 1999), (2001, 2999), (3001, 3999), (4001, 4999),
+        (5001, 5999), (6001, 6999), (7001, 7999), (8001, 8999), (9001, 9997)
+    ]
     
-    st.session_state['result_df'] = result_df
-    st.session_state['meta_stats'] = meta_stats
-    st.session_state['target_date_str'] = target_date_str
-    if 'val_df' in st.session_state:
-        del st.session_state['val_df']
+    all_codes = set(major_companies.keys()).union(set(individual_1000s))
+    for r_start, r_end in ranges:
+        for code_num in range(r_start, r_end + 1, 3):
+            all_codes.add(str(code_num))
+            
+    sorted_codes = sorted(list(all_codes))
+    tickers = [f"{c}.T" for c in sorted_codes]
+    names = [major_companies.get(c, f"東証_{c}") for c in sorted_codes]
+    
+    return pd.DataFrame({
+        "Code": sorted_codes,
+        "Ticker": tickers,
+        "Name": names
+    })
 
-# --- 結果の表示 ---
-if 'result_df' in st.session_state:
-    res_df = st.session_state['result_df']
-    d_str = st.session_state.get('target_date_str', target_date_str)
-    meta = st.session_state.get('meta_stats', {})
+def analyze_market(target_date_str, use_cache=True):
+    """
+    日経平均（^N225）を用いて市場環境を判定する。
+    """
+    df_n225 = None
+    market_cache = load_local_cache(MARKET_CACHE_FILE) if use_cache else {}
     
-    if meta:
-        st.info(f"📊 **審査母数**: 東証の実在個別株 **{meta.get('valid_stocks', 0)} 銘柄** の株価データを正常に審査完了（うち既存キャッシュ利用: **{meta.get('cached_count', 0)} 銘柄**）")
-        
-    st.subheader(f"📋 買い候補銘柄一覧（判定日: {d_str} / 該当数: {len(res_df)}件）")
-    
-    if res_df.empty:
-        st.warning("条件に一致する銘柄は見つかりませんでした。")
-    else:
-        display_cols = ['コード', '企業名', '現在値', 'ピボット価格', '状態', '出来高倍率', '20日平均売買代金(億円)']
-        st.dataframe(res_df[display_cols], use_container_width=True)
-        
-        st.markdown("### 🔍 各銘柄の選定理由・根拠の詳細確認")
-        for idx, row in res_df.iterrows():
-            with st.expander(f"【{row['コード']}】 {row['企業名']} （現在値: {row['現在値']}円 / 出来高倍率: {row['出来高倍率']}倍 / 売買代金: {row['20日平均売買代金(億円)']}億円）"):
-                st.markdown(row['💡 抽出理由・根拠詳細'])
+    # キャッシュデータが存在し、かつ指定判定日までのデータが十分入っているか確認
+    if use_cache and "^N225" in market_cache:
+        temp_df = market_cache["^N225"]
+        last_d = pd.to_datetime(temp_df.index[-1]).strftime('%Y-%m-%d')
+        if last_d >= target_date_str:
+            df_n225 = temp_df
+            
+    if df_n225 is None:
+        try:
+            n225_ticker = yf.Ticker("^N225")
+            df_n225 = n225_ticker.history(period="2y")
+            if df_n225 is not None and not df_n225.empty:
+                market_cache["^N225"] = df_n225
+                save_local_cache(MARKET_CACHE_FILE, market_cache)
+        except Exception:
+            if "^N225" in market_cache:
+                df_n225 = market_cache["^N225"]
                 
-        # --- スクリーニング単体のCSVダウンロード ---
-        export_df = res_df.copy()
-        export_df.insert(0, '判定日', d_str)
-        csv_screening = export_df.to_csv(index=False).encode('utf-8-sig')
+    if df_n225 is None or df_n225.empty:
+        return "Neutral", "市場データの取得が一時制限されています（キャッシュ利用推奨）。"
         
-        st.download_button(
-            label="📊 スクリーニング結果（全指標入り）をCSVダウンロード",
-            data=csv_screening,
-            file_name=f"vcp_screening_result_{d_str}.csv",
-            mime="text/csv"
-        )
+    try:
+        df = df_n225.copy()
+        df.index = pd.to_datetime(df.index).strftime('%Y-%m-%d')
+        sub_df = df[df.index <= target_date_str]
+        if len(sub_df) < 200:
+            return "Neutral", "市場の200日移動平均線を算出するためのデータが不足しています。"
+            
+        close = sub_df['Close'].iloc[-1]
+        sma50 = sub_df['Close'].rolling(50).mean().iloc[-1]
+        sma200 = sub_df['Close'].rolling(200).mean().iloc[-1]
+        sma200_prev = sub_df['Close'].rolling(200).mean().iloc[-20]
         
-        # ==============================================================
-        # ⚡ 自動一括トレード検証（バックテスト）セクション
-        # ==============================================================
-        st.markdown("---")
-        st.subheader("⚡ 抽出銘柄のトレード結果・一括検証")
-        st.markdown("抽出された全銘柄について、**翌営業日寄り付きでエントリーした後の売買結果・現在の含み損益** を検証します。")
+        is_above_200 = close > sma200
+        is_50_above_200 = sma50 > sma200
+        is_200_rising = sma200 > sma200_prev
         
-        v_col1, v_col2 = st.columns([1, 2])
-        with v_col1:
-            rrr = st.slider("利確目標のリスク倍率 (RRR)", min_value=1.5, max_value=4.0, value=2.5, step=0.5, key="batch_rrr")
-        with v_col2:
-            st.caption("※ 損切りライン(SL)はピボット価格とATR(20)から自動設定されます（買値より下を完全保証）。同日両到達時は保守的に損切り優先と判定します。")
+        if is_above_200 and is_50_above_200 and is_200_rising:
+            return "Risk-On", f"市場指数順調（終値>200日線、50日>200日、200日上昇） ⇒ 通常売買OK"
+        elif not is_above_200 and not is_200_rising:
+            return "Risk-Off", f"市場環境悪化（終値<200日線、200日下落） ⇒ 守り重視・新規買い控え"
+        else:
+            return "Neutral", f"市場環境モミ合い（方向感模索） ⇒ 厳選して売買"
+    except Exception as e:
+        return "Neutral", f"市場環境判定エラー: {e}"
+
+def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=None):
+    """
+    キャッシュ優先＆自動最新更新スクリーニングエンジン。
+    """
+    tickers = stock_df['Ticker'].tolist()
+    total_stock_count = len(tickers)
+    results = []
+    
+    # キャッシュ読み込み
+    all_data = load_local_cache(STOCK_CACHE_FILE) if use_cache else {}
+    cached_count = len(all_data)
+    
+    # キャッシュの鮮度チェック（指定判定日までのデータが足りない銘柄は再取得対象へ）
+    missing_tickers = []
+    for t in tickers:
+        if t not in all_data:
+            missing_tickers.append(t)
+        else:
+            # キャッシュの最新日付が判定日より古い場合は更新対象にする
+            t_last_date = pd.to_datetime(all_data[t].index[-1]).strftime('%Y-%m-%d')
+            if t_last_date < target_date_str:
+                missing_tickers.append(t)
+                
+    if missing_tickers:
+        chunk_size = 150
+        total_chunks = (len(missing_tickers) + chunk_size - 1) // chunk_size
+        processed_count = 0
+        
+        for c_idx in range(total_chunks):
+            chunk_tickers = missing_tickers[c_idx * chunk_size : (c_idx + 1) * chunk_size]
+            chunk_len = len(chunk_tickers)
             
-        if st.button("🚀 この抽出銘柄のトレード結果を一括検証する"):
-            v_progress = st.progress(0, text="抽出銘柄の推移データを取得中...")
-            val_df = batch_validate_trades(res_df, d_str, risk_reward_ratio=rrr, progress_bar=v_progress)
-            st.session_state['val_df'] = val_df
-            st.session_state['val_d_str'] = d_str
+            if progress_bar:
+                progress = int((processed_count / len(missing_tickers)) * 60)
+                progress_bar.progress(progress / 100.0, text=f"必要な株価データを取得中... ({processed_count} / {len(missing_tickers)} 銘柄)")
+                
+            df_chunk = None
+            for attempt in range(2):
+                try:
+                    df_chunk = yf.download(chunk_tickers, period="2y", group_by='ticker', threads=True, progress=False)
+                    if df_chunk is not None and not df_chunk.empty:
+                        break
+                except Exception:
+                    time.sleep(1.0)
+                    
+            if df_chunk is not None and not df_chunk.empty:
+                for t in chunk_tickers:
+                    try:
+                        if len(chunk_tickers) == 1:
+                            sub_df = df_chunk.dropna(how='all')
+                        else:
+                            sub_df = df_chunk[t].dropna(how='all')
+                        if not sub_df.empty:
+                            all_data[t] = sub_df
+                    except:
+                        continue
+                        
+            processed_count += chunk_len
             
-        if 'val_df' in st.session_state:
-            val_df = st.session_state['val_df']
+        save_local_cache(STOCK_CACHE_FILE, all_data)
+        
+    if progress_bar:
+        progress_bar.progress(0.70, text=f"株価データ準備完了。スクリーニング解析を実行中...")
+        
+    total_valid = len(all_data)
+    analyzed_count = 0
+    
+    for ticker, df in all_data.items():
+        analyzed_count += 1
+        if progress_bar and total_valid > 0:
+            progress = 70 + int((analyzed_count / total_valid) * 30)
+            progress_bar.progress(min(progress, 100) / 100.0, text=f"スクリーニング解析中... ({analyzed_count} / {total_valid} 有効銘柄)")
             
-            if val_df.empty:
-                st.warning("検証対象のデータがありませんでした。")
+        try:
+            df.index = pd.to_datetime(df.index).strftime('%Y-%m-%d')
+            sub_df = df[df.index <= target_date_str].copy()
+            
+            if len(sub_df) < 200:
+                continue
+                
+            current_close = sub_df['Close'].iloc[-1]
+            current_vol = sub_df['Volume'].iloc[-1]
+            current_date = sub_df.index[-1]
+            
+            # --- 1. 流動性＆基本フィルター ---
+            if current_close < 500:
+                continue
+            
+            sub_df['Turnover'] = sub_df['Close'] * sub_df['Volume']
+            avg_turnover = sub_df['Turnover'].rolling(20).mean().iloc[-1]
+            if avg_turnover < 500000000:
+                continue
+                
+            # --- 2. ミネルヴィニ流 トレンドテンプレート ---
+            sma50 = sub_df['Close'].rolling(50).mean().iloc[-1]
+            sma150 = sub_df['Close'].rolling(150).mean().iloc[-1]
+            sma200 = sub_df['Close'].rolling(200).mean().iloc[-1]
+            sma200_20days_ago = sub_df['Close'].rolling(200).mean().iloc[-20]
+            high_52w = sub_df['High'].tail(250).max()
+            low_52w = sub_df['Low'].tail(250).min()
+            
+            cond_trend = (
+                (current_close > sma150) and
+                (sma150 > sma200) and
+                (sma200 > sma200_20days_ago) and
+                (current_close >= 1.25 * low_52w) and
+                (current_close >= 0.75 * high_52w)
+            )
+            
+            if not cond_trend:
+                continue
+                
+            # --- 3. ピボット価格と出来高基準 ---
+            pivot_price = sub_df['High'].tail(20).iloc[:-1].max()
+            avg_vol_20 = sub_df['Volume'].rolling(20).mean().iloc[-1]
+            
+            # --- 4. デュアル判定 ---
+            is_breakout = (current_close >= pivot_price) and (current_vol >= avg_vol_20 * 1.5)
+            is_near_pivot = (pivot_price * 0.97 <= current_close < pivot_price)
+            
+            if not (is_breakout or is_near_pivot):
+                continue
+                
+            vol_ratio = current_vol / avg_vol_20 if avg_vol_20 > 0 else 0
+            dist_from_pivot = ((current_close - pivot_price) / pivot_price) * 100
+            diff_from_high_52w = ((current_close - high_52w) / high_52w) * 100
+            rise_from_low_52w = ((current_close - low_52w) / low_52w) * 100
+            
+            match_row = stock_df[stock_df['Ticker'] == ticker]
+            code = match_row['Code'].values[0] if not match_row.empty else ticker.replace('.T', '')
+            name = match_row['Name'].values[0] if not match_row.empty else f"東証_{code}"
+            
+            if is_breakout:
+                status_label = "🚀 【ブレイク当日】新高値突破＆出来高急増"
+                reason_detail = (
+                    f"**判定日 ({current_date}) 時点の状況**:\n"
+                    f"- **株価/ピボット**: 終値 {current_close:.1f}円 が過去20日高値（{pivot_price:.1f}円）を上抜け（ブレイク達成）。\n"
+                    f"- **出来高倍率**: 当日出来高は20日平均の **{vol_ratio:.2f}倍**（基準1.5倍クリア）。機関投資家の買い参入を示唆。\n"
+                    f"- **トレンド状態**: 200日線（{sma200:.1f}円）が上向きで、主要移動平均線のパーフェクトオーダーを形成中。"
+                )
             else:
-                pending_count = len(val_df[val_df['検証ステータス'].str.contains("未到来|待機中")])
+                status_label = "⏳ 【ブレイク前夜・VCP収縮】ピボット近傍で推移中"
+                reason_detail = (
+                    f"**判定日 ({current_date}) 時点の状況**:\n"
+                    f"- **株価/ピボット**: 終値 {current_close:.1f}円 はピボット価格（{pivot_price:.1f}円）に対して **{dist_from_pivot:+.2f}%** の至近距離に位置。\n"
+                    f"- **VCP状態**: 売り圧力が枯れ、ボラティリティが収縮しながら上値抵抗線（ピボット）の真下でベースを形成中。\n"
+                    f"- **出来高倍率**: 20日平均比 **{vol_ratio:.2f}倍**（今後ブレイク時の出来高急増に要注目）。\n"
+                    f"- **トレンド状態**: トレンドテンプレートの厳格な条件をすべてクリアし、本格上昇のスタンバイ状態。"
+                )
                 
-                if pending_count == len(val_df):
-                    st.info(f"⏳ **検証結果**: 設定判定日（{d_str}）以降の相場データが存在しないため、全銘柄が**翌営業日の寄り付き待ち（待機中）**です。")
-                    st.dataframe(val_df[['コード', '企業名', '検証ステータス']], use_container_width=True)
-                else:
-                    finished_trades = val_df[val_df['勝敗'].isin(['勝ち', '負け'])]
-                    win_trades = val_df[val_df['勝敗'] == '勝ち']
+            results.append({
+                'コード': code,
+                'ティッカー': ticker,
+                '企業名': name,
+                '現在値': current_close,
+                'ピボット価格': round(pivot_price, 1),
+                'ピボット乖離率(%)': round(dist_from_pivot, 2),
+                '状態': status_label,
+                '出来高倍率': round(vol_ratio, 2),
+                '当日出来高': int(current_vol),
+                '20日平均出来高': int(avg_vol_20),
+                '20日平均売買代金(億円)': round(avg_turnover / 100000000, 2),
+                'SMA50': round(sma50, 1),
+                'SMA150': round(sma150, 1),
+                'SMA200': round(sma200, 1),
+                '52週高値': round(high_52w, 1),
+                '52週安値': round(low_52w, 1),
+                '52週高値乖離率(%)': round(diff_from_high_52w, 2),
+                '52週安値上昇率(%)': round(rise_from_low_52w, 2),
+                '💡 抽出理由・根拠詳細': reason_detail
+            })
+            
+        except Exception as e:
+            continue
+            
+    if progress_bar:
+        progress_bar.empty()
+        
+    meta_stats = {
+        'total_stocks': total_stock_count,
+        'valid_stocks': total_valid,
+        'cached_count': cached_count
+    }
+    return pd.DataFrame(results), meta_stats
+
+def batch_validate_trades(screened_df, signal_date_str, risk_reward_ratio=2.5, progress_bar=None):
+    """
+    抽出銘柄の一括トレード検証（キャッシュ連動）。
+    """
+    if screened_df.empty:
+        return pd.DataFrame()
+        
+    tickers = screened_df['ティッカー'].tolist()
+    total = len(tickers)
+    
+    all_cache = load_local_cache(STOCK_CACHE_FILE)
+    missing_tickers = [t for t in tickers if t not in all_cache]
+    
+    if missing_tickers:
+        try:
+            df_batch = yf.download(missing_tickers, period="2y", group_by='ticker', threads=True, progress=False)
+            if not df_batch.empty:
+                for t in missing_tickers:
+                    try:
+                        if len(missing_tickers) == 1:
+                            sub_df = df_batch.dropna(how='all')
+                        else:
+                            sub_df = df_batch[t].dropna(how='all')
+                        if not sub_df.empty:
+                            all_cache[t] = sub_df
+                    except:
+                        continue
+                save_local_cache(STOCK_CACHE_FILE, all_cache)
+        except Exception:
+            pass
+            
+    validation_results = []
+    
+    for idx, row in screened_df.iterrows():
+        ticker = row['ティッカー']
+        code = row['コード']
+        name = row['企業名']
+        
+        if progress_bar:
+            prog_val = (idx + 1) / total
+            progress_bar.progress(min(prog_val, 1.0), text=f"【{idx + 1}/{total}】 {name} のトレード推移を解析中...")
+            
+        df = all_cache.get(ticker)
+        if df is None or df.empty:
+            continue
+            
+        try:
+            df.index = pd.to_datetime(df.index).strftime('%Y-%m-%d')
+            past_df = df[df.index <= signal_date_str]
+            future_df = df[df.index > signal_date_str]
+            
+            if future_df.empty:
+                validation_results.append({
+                    'コード': code,
+                    'ティッカー': ticker,
+                    '企業名': name,
+                    'エントリー日': "翌営業日待ち",
+                    '買値(エントリー)': np.nan,
+                    '売値(決済/現在値)': np.nan,
+                    'SL価格': np.nan,
+                    'TP目標': np.nan,
+                    '検証ステータス': "⏳ エントリー待機中（翌営業日データ未到来）",
+                    '決済日/現在日': "-",
+                    '損益額(円)': 0.0,
+                    '損益率(%)': 0.0,
+                    '保有日数': 0,
+                    '勝敗': "未確定"
+                })
+                continue
+                
+            pivot_price = past_df['High'].tail(20).iloc[:-1].max()
+            high_low = past_df['High'] - past_df['Low']
+            high_cp = np.abs(past_df['High'] - past_df['Close'].shift())
+            low_cp = np.abs(past_df['Low'] - past_df['Close'].shift())
+            tr = pd.concat([high_low, high_cp, low_cp], axis=1).max(axis=1)
+            atr20 = tr.rolling(20).mean().iloc[-1]
+            if pd.isna(atr20) or atr20 <= 0:
+                atr20 = past_df['Close'].iloc[-1] * 0.02
+                
+            entry_date = future_df.index[0]
+            entry_price = future_df['Open'].iloc[0]
+            
+            calc_sl = max(pivot_price * 0.95, pivot_price - (1.5 * atr20))
+            sl_price = min(calc_sl, entry_price - (1.5 * atr20), entry_price * 0.95)
+            
+            risk_amount = entry_price - sl_price
+            if risk_amount <= 0:
+                risk_amount = entry_price * 0.05
+                sl_price = entry_price - risk_amount
+                
+            tp_price = entry_price + (risk_amount * risk_reward_ratio)
+            
+            trade_period_df = future_df.loc[entry_date:]
+            
+            current_last_close = trade_period_df['Close'].iloc[-1]
+            pnl_amount = current_last_close - entry_price
+            pnl_pct = (pnl_amount / entry_price) * 100
+            
+            status = f"⏳ 保有中 ({'含み益' if pnl_amount >= 0 else '含み損'})"
+            exit_date = trade_period_df.index[-1]
+            exit_price = current_last_close
+            hold_days = len(trade_period_df)
+            outcome = "保有中"
+            
+            for d_idx, d_row in trade_period_df.iterrows():
+                d_low = d_row['Low']
+                d_high = d_row['High']
+                
+                hit_sl = d_low <= sl_price
+                hit_tp = d_high >= tp_price
+                
+                if hit_sl and hit_tp:
+                    status = "❌ 損切り (同日到達・保守判定)"
+                    exit_date = d_idx
+                    exit_price = sl_price
+                    pnl_amount = exit_price - entry_price
+                    pnl_pct = (pnl_amount / entry_price) * 100
+                    hold_days = len(trade_period_df.loc[:d_idx])
+                    outcome = "負け"
+                    break
+                elif hit_sl:
+                    status = "❌ 損切り (SL到達)"
+                    exit_date = d_idx
+                    exit_price = sl_price
+                    pnl_amount = exit_price - entry_price
+                    pnl_pct = (pnl_amount / entry_price) * 100
+                    hold_days = len(trade_period_df.loc[:d_idx])
+                    outcome = "負け"
+                    break
+                elif hit_tp:
+                    status = "🎯 利確達成 (TP到達)"
+                    exit_date = d_idx
+                    exit_price = tp_price
+                    pnl_amount = exit_price - entry_price
+                    pnl_pct = (pnl_amount / entry_price) * 100
+                    hold_days = len(trade_period_df.loc[:d_idx])
+                    outcome = "勝ち"
+                    break
                     
-                    win_rate = (len(win_trades) / len(finished_trades) * 100) if len(finished_trades) > 0 else 0.0
-                    avg_pnl = val_df['損益率(%)'].mean()
-                    total_pnl_yen = val_df['損益額(円)'].sum()
-                    active_count = len(val_df[val_df['勝敗'] == '保有中'])
-                    
-                    st.markdown("#### 📊 パフォーマンス集計サマリー")
-                    m1, m2, m3, m4 = st.columns(4)
-                    m1.metric("検証銘柄数", f"{len(val_df)} 銘柄")
-                    m2.metric("勝率（決済済み）", f"{win_rate:.1f} %", f"{len(win_trades)}勝 / {len(finished_trades)}決済")
-                    m3.metric("全銘柄 平均損益率", f"{avg_pnl:+.2f} %")
-                    m4.metric("現在保有中（含み推移）", f"{active_count} 銘柄", f"合計損益: {total_pnl_yen:+.1f}円")
-                    
-                    st.markdown("#### 📋 銘柄別トレード結果一覧（売買価格・損益詳細）")
-                    val_display_cols = [
-                        'コード', '企業名', 'エントリー日', '買値(エントリー)', '売値(決済/現在値)', 
-                        'SL価格', 'TP目標', '検証ステータス', '決済日/現在日', '損益額(円)', '損益率(%)', '保有日数'
-                    ]
-                    st.dataframe(val_df[val_display_cols], use_container_width=True)
-                    
-                    val_subset = val_df.drop(columns=['企業名', 'ティッカー'], errors='ignore')
-                    merged_export = pd.merge(export_df, val_subset, on='コード', how='left')
-                    
-                    csv_merged = merged_export.to_csv(index=False).encode('utf-8-sig')
-                    
-                    st.markdown("---")
-                    st.subheader("📥 スクリーニング指標 ＆ 売買結果の完全突合CSV")
-                    st.download_button(
-                        label="📊 全テクニカル指標 ＆ トレード結果の完全突合CSVをダウンロード",
-                        data=csv_merged,
-                        file_name=f"vcp_trade_validation_merged_{d_str}.csv",
-                        mime="text/csv",
-                        help="スクリーニング時の全指標と実際の売買結果が1行に結合されたCSVです。"
-                    )
+            validation_results.append({
+                'コード': code,
+                'ティッカー': ticker,
+                '企業名': name,
+                'エントリー日': entry_date,
+                '買値(エントリー)': round(entry_price, 1),
+                '売値(決済/現在値)': round(exit_price, 1),
+                'SL価格': round(sl_price, 1),
+                'TP目標': round(tp_price, 1),
+                '検証ステータス': status,
+                '決済日/現在日': exit_date,
+                '損益額(円)': round(pnl_amount, 1),
+                '損益率(%)': round(pnl_pct, 2),
+                '保有日数': hold_days,
+                '勝敗': outcome
+            })
+            
+        except Exception as e:
+            continue
+            
+    if progress_bar:
+        progress_bar.empty()
+        
+    return pd.DataFrame(validation_results)

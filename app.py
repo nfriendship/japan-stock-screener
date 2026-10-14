@@ -111,7 +111,7 @@ st.markdown("""
         box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4) !important;
     }
     div[data-testid="stDownloadButton"] button:hover,
-    div[data-testid="stDownloadButton"] a:hover {
+    div.stDownloadButton button:hover {
         background-color: #2ea043 !important;
         border-color: #56d364 !important;
     }
@@ -155,7 +155,6 @@ data_mode = st.sidebar.radio(
 )
 use_cache = "高速キャッシュ優先" in data_mode
 
-# 現在のキャッシュ件数を表示
 current_cache = load_local_cache(STOCK_CACHE_FILE)
 st.sidebar.caption(f"📦 現在保存中のキャッシュ: **{len(current_cache)} 銘柄分**")
 
