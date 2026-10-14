@@ -152,11 +152,10 @@ data_mode = st.sidebar.radio(
     "取得モード",
     ["⚡ 高速キャッシュ優先（バックテスト推奨）", "🔄 ライブ最新データを強制取得（更新）"],
     index=0,
-    help="「高速キャッシュ優先」を選択すると、一度保存されたデータを再利用するためYahooへのリクエストを送らず、制限（429エラー）なしで数秒で実行できます。"
+    help="「高速キャッシュ優先」を選択すると、不足している期間のみを自動でダウンロードして既存データと結合し、不要な通信を完全遮断します。"
 )
 use_cache = "高速キャッシュ優先" in data_mode
 
-# セッション状態から最新のキャッシュ件数を取得して即座に反映
 current_cache = load_local_cache(STOCK_CACHE_FILE)
 cached_count_display = st.session_state.get('saved_cache_count', len(current_cache))
 st.sidebar.caption(f"📦 現在保存中のキャッシュ: **{cached_count_display} 銘柄分**")
@@ -194,7 +193,6 @@ if st.button("指定日でのスクリーニングを実行する", type="primar
     progress_bar.empty()
     st.success("解析が完了しました！")
     
-    # セッションステートに保存（サイドバーのカウントを即座に更新）
     st.session_state['result_df'] = result_df
     st.session_state['meta_stats'] = meta_stats
     st.session_state['target_date_str'] = target_date_str
@@ -289,7 +287,7 @@ if 'result_df' in st.session_state:
                         'コード', '企業名', 'エントリー日', '買値(エントリー)', '売値(決済/現在値)', 
                         'SL価格', 'TP目標', '検証ステータス', '決済日/現在日', '損益額(円)', '損益率(%)', '保有日数'
                     ]
-                    st.dataframe(val_df[val_display_cols], use_container_width=True)
+                    st.dataframe(val_display_cols, use_container_width=True)
                     
                     val_subset = val_df.drop(columns=['企業名', 'ティッカー'], errors='ignore')
                     merged_export = pd.merge(export_df, val_subset, on='コード', how='left')

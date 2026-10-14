@@ -48,6 +48,17 @@ def clear_all_cache():
         except:
             pass
 
+def merge_stock_df(old_df, new_df):
+    """新旧の株価データを日付インデックスで安全に結合・重複排除する"""
+    if old_df is None or old_df.empty:
+        return new_df
+    if new_df is None or new_df.empty:
+        return old_df
+    combined = pd.concat([old_df, new_df])
+    combined = combined[~combined.index.duplicated(keep='last')]
+    combined.sort_index(inplace=True)
+    return combined
+
 def get_tse_stock_list():
     """東証個別銘柄リスト生成（ETF除外）"""
     major_companies = {
@@ -131,21 +142,28 @@ def get_tse_stock_list():
     })
 
 def analyze_market(target_date_str, use_cache=True):
-    """日経平均の判定"""
+    """日経平均の市場判定（判定日に応じた過去データ自動補完）"""
+    target_dt = pd.to_datetime(target_date_str)
+    needed_start_dt = target_dt - timedelta(days=450)
+    needed_start_str = needed_start_dt.strftime('%Y-%m-%d')
+    
     df_n225 = None
     market_cache = load_local_cache(MARKET_CACHE_FILE) if use_cache else {}
     
     if use_cache and "^N225" in market_cache:
         temp_df = market_cache["^N225"]
+        first_d = pd.to_datetime(temp_df.index[0]).strftime('%Y-%m-%d')
         last_d = pd.to_datetime(temp_df.index[-1]).strftime('%Y-%m-%d')
-        if last_d >= target_date_str:
+        # 過去も未来も足りていればキャッシュ利用
+        if first_d <= needed_start_str and last_d >= target_date_str:
             df_n225 = temp_df
             
     if df_n225 is None:
         try:
             n225_ticker = yf.Ticker("^N225")
-            df_n225 = n225_ticker.history(period="2y")
-            if df_n225 is not None and not df_n225.empty:
+            new_n225 = n225_ticker.history(start=needed_start_str)
+            if new_n225 is not None and not new_n225.empty:
+                df_n225 = merge_stock_df(market_cache.get("^N225"), new_n225)
                 market_cache["^N225"] = df_n225
                 save_local_cache(MARKET_CACHE_FILE, market_cache)
         except Exception:
@@ -181,28 +199,36 @@ def analyze_market(target_date_str, use_cache=True):
         return "Neutral", f"市場環境判定エラー: {e}"
 
 def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=None):
-    """スクリーニング実行エンジン（キャッシュ自動更新）"""
+    """
+    判定日を起点とした動的取得 ＆ 増分蓄積型キャッシュスクリーニング
+    """
     tickers = stock_df['Ticker'].tolist()
     total_stock_count = len(tickers)
     results = []
+    
+    target_dt = pd.to_datetime(target_date_str)
+    # 判定日から見て最低200営業日＋マージン（約450日前）が必要
+    needed_start_dt = target_dt - timedelta(days=450)
+    needed_start_str = needed_start_dt.strftime('%Y-%m-%d')
     
     # 既存キャッシュのロード
     all_data = load_local_cache(STOCK_CACHE_FILE)
     cached_count_before = len(all_data)
     
-    # 取得が必要な銘柄の判定
+    # 不足銘柄の特定（未保存、未来データ不足、または過去データ不足）
     missing_tickers = []
     if not use_cache:
-        # 強制最新取得モード時は全銘柄を取得
         missing_tickers = tickers
     else:
-        # キャッシュ優先モード時：未保存または判定日より古い銘柄のみ取得
         for t in tickers:
             if t not in all_data:
                 missing_tickers.append(t)
             else:
-                t_last_date = pd.to_datetime(all_data[t].index[-1]).strftime('%Y-%m-%d')
-                if t_last_date < target_date_str:
+                t_df = all_data[t]
+                t_first_date = pd.to_datetime(t_df.index[0]).strftime('%Y-%m-%d')
+                t_last_date = pd.to_datetime(t_df.index[-1]).strftime('%Y-%m-%d')
+                # 過去データが足りない、または未来データが足りない場合は取得対象へ
+                if t_first_date > needed_start_str or t_last_date < target_date_str:
                     missing_tickers.append(t)
                     
     if missing_tickers:
@@ -216,12 +242,13 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
             
             if progress_bar:
                 progress = int((processed_count / len(missing_tickers)) * 60)
-                progress_bar.progress(progress / 100.0, text=f"株価データを取得・更新中... ({processed_count} / {len(missing_tickers)} 銘柄)")
+                progress_bar.progress(progress / 100.0, text=f"必要な株価データを取得・更新中... ({processed_count} / {len(missing_tickers)} 銘柄)")
                 
             df_chunk = None
             for attempt in range(2):
                 try:
-                    df_chunk = yf.download(chunk_tickers, period="2y", group_by='ticker', threads=True, progress=False)
+                    # 判定日に応じた十分な過去起点から現在まで一括取得
+                    df_chunk = yf.download(chunk_tickers, start=needed_start_str, group_by='ticker', threads=True, progress=False)
                     if df_chunk is not None and not df_chunk.empty:
                         break
                 except Exception:
@@ -235,13 +262,13 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
                         else:
                             sub_df = df_chunk[t].dropna(how='all')
                         if not sub_df.empty:
-                            all_data[t] = sub_df
+                            # 既存データと新データをマージしてキャッシュを育てる
+                            all_data[t] = merge_stock_df(all_data.get(t), sub_df)
                     except:
                         continue
                         
             processed_count += chunk_len
             
-        # 確実にキャッシュを保存
         save_local_cache(STOCK_CACHE_FILE, all_data)
         
     if progress_bar:
@@ -260,6 +287,7 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
             df.index = pd.to_datetime(df.index).strftime('%Y-%m-%d')
             sub_df = df[df.index <= target_date_str].copy()
             
+            # 200日線・52週高安の算出に最低200営業日が必要
             if len(sub_df) < 200:
                 continue
                 
@@ -391,7 +419,7 @@ def batch_validate_trades(screened_df, signal_date_str, risk_reward_ratio=2.5, p
                         else:
                             sub_df = df_batch[t].dropna(how='all')
                         if not sub_df.empty:
-                            all_cache[t] = sub_df
+                            all_cache[t] = merge_stock_df(all_cache.get(t), sub_df)
                     except:
                         continue
                 save_local_cache(STOCK_CACHE_FILE, all_cache)
