@@ -151,19 +151,24 @@ st.sidebar.subheader("💾 データ取得・キャッシュ設定")
 data_mode = st.sidebar.radio(
     "取得モード",
     ["⚡ 高速キャッシュ優先（バックテスト推奨）", "🔄 ライブ最新データを強制取得（更新）"],
+    index=0,
     help="「高速キャッシュ優先」を選択すると、一度保存されたデータを再利用するためYahooへのリクエストを送らず、制限（429エラー）なしで数秒で実行できます。"
 )
 use_cache = "高速キャッシュ優先" in data_mode
 
+# セッション状態から最新のキャッシュ件数を取得して即座に反映
 current_cache = load_local_cache(STOCK_CACHE_FILE)
-st.sidebar.caption(f"📦 現在保存中のキャッシュ: **{len(current_cache)} 銘柄分**")
+cached_count_display = st.session_state.get('saved_cache_count', len(current_cache))
+st.sidebar.caption(f"📦 現在保存中のキャッシュ: **{cached_count_display} 銘柄分**")
 
 if st.sidebar.button("🗑 キャッシュを全消去して初期化"):
     clear_all_cache()
+    if 'saved_cache_count' in st.session_state:
+        del st.session_state['saved_cache_count']
     st.sidebar.success("キャッシュを消去しました。")
     st.rerun()
 
-st.info(f"📅 設定中の判定日: **{target_date_str}** ｜ モード: **{'キャッシュ高速実行' if use_cache else 'ライブ通信更新'}**")
+st.info(f"📅 設定中の判定日: **{target_date_str}** ｜ モード: **{'⚡ キャッシュ高速実行' if use_cache else '🔄 ライブ通信更新'}**")
 
 # --- 市場環境判定の表示 ---
 market_status, market_msg = analyze_market(target_date_str, use_cache=use_cache)
@@ -189,11 +194,14 @@ if st.button("指定日でのスクリーニングを実行する", type="primar
     progress_bar.empty()
     st.success("解析が完了しました！")
     
+    # セッションステートに保存（サイドバーのカウントを即座に更新）
     st.session_state['result_df'] = result_df
     st.session_state['meta_stats'] = meta_stats
     st.session_state['target_date_str'] = target_date_str
+    st.session_state['saved_cache_count'] = meta_stats.get('saved_cache_count', 0)
     if 'val_df' in st.session_state:
         del st.session_state['val_df']
+    st.rerun()
 
 # --- 結果の表示 ---
 if 'result_df' in st.session_state:
@@ -202,7 +210,7 @@ if 'result_df' in st.session_state:
     meta = st.session_state.get('meta_stats', {})
     
     if meta:
-        st.info(f"📊 **審査母数**: 東証の実在個別株 **{meta.get('valid_stocks', 0)} 銘柄** の株価データを正常に審査完了（うち既存キャッシュ利用: **{meta.get('cached_count', 0)} 銘柄**）")
+        st.info(f"📊 **審査母数**: 東証の実在個別株 **{meta.get('valid_stocks', 0)} 銘柄** の株価データを正常に審査完了（うち既存キャッシュ利用: **{meta.get('cached_count_before', 0)} 銘柄**）")
         
     st.subheader(f"📋 買い候補銘柄一覧（判定日: {d_str} / 該当数: {len(res_df)}件）")
     
@@ -247,6 +255,7 @@ if 'result_df' in st.session_state:
             val_df = batch_validate_trades(res_df, d_str, risk_reward_ratio=rrr, progress_bar=v_progress)
             st.session_state['val_df'] = val_df
             st.session_state['val_d_str'] = d_str
+            st.rerun()
             
         if 'val_df' in st.session_state:
             val_df = st.session_state['val_df']

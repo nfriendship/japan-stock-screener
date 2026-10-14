@@ -6,18 +6,17 @@ import os
 import pickle
 from datetime import datetime, timedelta
 
-# キャッシュディレクトリの定義
 CACHE_DIR = "cache_data"
 STOCK_CACHE_FILE = os.path.join(CACHE_DIR, "stock_history_cache.pkl")
 MARKET_CACHE_FILE = os.path.join(CACHE_DIR, "market_history_cache.pkl")
 
 def ensure_cache_dir():
-    """キャッシュ用フォルダが存在しない場合は自動作成する"""
+    """キャッシュフォルダを作成"""
     if not os.path.exists(CACHE_DIR):
         os.makedirs(CACHE_DIR, exist_ok=True)
 
 def load_local_cache(cache_file):
-    """キャッシュファイルを読み込む"""
+    """キャッシュを安全に読み込む"""
     ensure_cache_dir()
     if os.path.exists(cache_file):
         try:
@@ -28,7 +27,7 @@ def load_local_cache(cache_file):
     return {}
 
 def save_local_cache(cache_file, data_dict):
-    """キャッシュファイルに保存する"""
+    """キャッシュを安全に保存する"""
     ensure_cache_dir()
     try:
         with open(cache_file, "wb") as f:
@@ -37,7 +36,7 @@ def save_local_cache(cache_file, data_dict):
         pass
 
 def clear_all_cache():
-    """キャッシュを初期化する"""
+    """キャッシュ全消去"""
     if os.path.exists(STOCK_CACHE_FILE):
         try:
             os.remove(STOCK_CACHE_FILE)
@@ -50,9 +49,7 @@ def clear_all_cache():
             pass
 
 def get_tse_stock_list():
-    """
-    東証の全セクター・個別株（約3,000銘柄規模）を生成。ETFは除外。
-    """
+    """東証個別銘柄リスト生成（ETF除外）"""
     major_companies = {
         "7203": "トヨタ自動車", "6758": "ソニーグループ", "9984": "ソフトバンクグループ", "8306": "三菱UFJフィナンシャルG",
         "6861": "キーエンス", "6594": "ニデック", "9432": "日本電信電話", "8035": "東京エレクトロン",
@@ -134,13 +131,10 @@ def get_tse_stock_list():
     })
 
 def analyze_market(target_date_str, use_cache=True):
-    """
-    日経平均（^N225）を用いて市場環境を判定する。
-    """
+    """日経平均の判定"""
     df_n225 = None
     market_cache = load_local_cache(MARKET_CACHE_FILE) if use_cache else {}
     
-    # キャッシュデータが存在し、かつ指定判定日までのデータが十分入っているか確認
     if use_cache and "^N225" in market_cache:
         temp_df = market_cache["^N225"]
         last_d = pd.to_datetime(temp_df.index[-1]).strftime('%Y-%m-%d')
@@ -159,7 +153,7 @@ def analyze_market(target_date_str, use_cache=True):
                 df_n225 = market_cache["^N225"]
                 
     if df_n225 is None or df_n225.empty:
-        return "Neutral", "市場データの取得が一時制限されています（キャッシュ利用推奨）。"
+        return "Neutral", "市場環境判定待機中（キャッシュまたは再試行推奨）"
         
     try:
         df = df_n225.copy()
@@ -187,28 +181,30 @@ def analyze_market(target_date_str, use_cache=True):
         return "Neutral", f"市場環境判定エラー: {e}"
 
 def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=None):
-    """
-    キャッシュ優先＆自動最新更新スクリーニングエンジン。
-    """
+    """スクリーニング実行エンジン（キャッシュ自動更新）"""
     tickers = stock_df['Ticker'].tolist()
     total_stock_count = len(tickers)
     results = []
     
-    # キャッシュ読み込み
-    all_data = load_local_cache(STOCK_CACHE_FILE) if use_cache else {}
-    cached_count = len(all_data)
+    # 既存キャッシュのロード
+    all_data = load_local_cache(STOCK_CACHE_FILE)
+    cached_count_before = len(all_data)
     
-    # キャッシュの鮮度チェック（指定判定日までのデータが足りない銘柄は再取得対象へ）
+    # 取得が必要な銘柄の判定
     missing_tickers = []
-    for t in tickers:
-        if t not in all_data:
-            missing_tickers.append(t)
-        else:
-            # キャッシュの最新日付が判定日より古い場合は更新対象にする
-            t_last_date = pd.to_datetime(all_data[t].index[-1]).strftime('%Y-%m-%d')
-            if t_last_date < target_date_str:
+    if not use_cache:
+        # 強制最新取得モード時は全銘柄を取得
+        missing_tickers = tickers
+    else:
+        # キャッシュ優先モード時：未保存または判定日より古い銘柄のみ取得
+        for t in tickers:
+            if t not in all_data:
                 missing_tickers.append(t)
-                
+            else:
+                t_last_date = pd.to_datetime(all_data[t].index[-1]).strftime('%Y-%m-%d')
+                if t_last_date < target_date_str:
+                    missing_tickers.append(t)
+                    
     if missing_tickers:
         chunk_size = 150
         total_chunks = (len(missing_tickers) + chunk_size - 1) // chunk_size
@@ -220,7 +216,7 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
             
             if progress_bar:
                 progress = int((processed_count / len(missing_tickers)) * 60)
-                progress_bar.progress(progress / 100.0, text=f"必要な株価データを取得中... ({processed_count} / {len(missing_tickers)} 銘柄)")
+                progress_bar.progress(progress / 100.0, text=f"株価データを取得・更新中... ({processed_count} / {len(missing_tickers)} 銘柄)")
                 
             df_chunk = None
             for attempt in range(2):
@@ -245,10 +241,11 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
                         
             processed_count += chunk_len
             
+        # 確実にキャッシュを保存
         save_local_cache(STOCK_CACHE_FILE, all_data)
         
     if progress_bar:
-        progress_bar.progress(0.70, text=f"株価データ準備完了。スクリーニング解析を実行中...")
+        progress_bar.progress(0.70, text=f"データ準備完了。スクリーニング解析を実行中...")
         
     total_valid = len(all_data)
     analyzed_count = 0
@@ -279,7 +276,7 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
             if avg_turnover < 500000000:
                 continue
                 
-            # --- 2. ミネルヴィニ流 トレンドテンプレート ---
+            # --- 2. トレンドテンプレート ---
             sma50 = sub_df['Close'].rolling(50).mean().iloc[-1]
             sma150 = sub_df['Close'].rolling(150).mean().iloc[-1]
             sma200 = sub_df['Close'].rolling(200).mean().iloc[-1]
@@ -302,7 +299,7 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
             pivot_price = sub_df['High'].tail(20).iloc[:-1].max()
             avg_vol_20 = sub_df['Volume'].rolling(20).mean().iloc[-1]
             
-            # --- 4. デュアル判定 ---
+            # --- 4. 判定ロジック ---
             is_breakout = (current_close >= pivot_price) and (current_vol >= avg_vol_20 * 1.5)
             is_near_pivot = (pivot_price * 0.97 <= current_close < pivot_price)
             
@@ -367,14 +364,13 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
     meta_stats = {
         'total_stocks': total_stock_count,
         'valid_stocks': total_valid,
-        'cached_count': cached_count
+        'saved_cache_count': len(all_data),
+        'cached_count_before': cached_count_before
     }
     return pd.DataFrame(results), meta_stats
 
 def batch_validate_trades(screened_df, signal_date_str, risk_reward_ratio=2.5, progress_bar=None):
-    """
-    抽出銘柄の一括トレード検証（キャッシュ連動）。
-    """
+    """抽出銘柄の一括検証"""
     if screened_df.empty:
         return pd.DataFrame()
         
