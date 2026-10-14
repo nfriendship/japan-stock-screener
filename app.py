@@ -1,7 +1,10 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-from screener import get_tse_stock_list, analyze_market, run_screener_batch, batch_validate_trades
+from screener import (
+    get_tse_stock_list, analyze_market, run_screener_batch, 
+    batch_validate_trades, clear_all_cache, load_local_cache, STOCK_CACHE_FILE
+)
 
 # --- ページ設定 ---
 st.set_page_config(page_title="日本株VCP・ブレイクアウトスクリーニングシステム", layout="wide")
@@ -9,26 +12,19 @@ st.set_page_config(page_title="日本株VCP・ブレイクアウトスクリー�
 # --- 視認性とデザインを最適化したダークテーマCSS ---
 st.markdown("""
     <style>
-    /* 全体の背景と基本文字色 */
     .stApp {
         background-color: #0e1117;
         color: #f0f6fc;
     }
-    
-    /* メインエリア内の見出しやテキストを明るく */
     .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6, .stApp p {
         color: #f0f6fc !important;
     }
-    
-    /* 右上のヘッダーの背景を黒くし、文字を白くする */
     header[data-testid="stHeader"] {
         background-color: #0e1117 !important;
     }
     header[data-testid="stHeader"] * {
         color: #f0f6fc !important;
     }
-    
-    /* サイドバー全体の背景とラベル視認性 */
     section[data-testid="stSidebar"] {
         background-color: #161b22;
         color: #f0f6fc !important;
@@ -44,8 +40,6 @@ st.markdown("""
         font-size: 0.95rem !important;
         font-weight: 600 !important;
     }
-    
-    /* 日付入力ボックス内部の文字（黒文字・太字） */
     div[data-testid="stDateInput"] {
         background-color: transparent !important;
     }
@@ -59,8 +53,6 @@ st.markdown("""
         -webkit-text-fill-color: #000000 !important;
         font-weight: 700 !important;
     }
-    
-    /* メトリック（指標カード）の背景 */
     div[data-testid="metric-container"] {
         background-color: #1f242d;
         border: 1px solid #30363d;
@@ -74,8 +66,6 @@ st.markdown("""
     div[data-testid="metric-container"] div[data-testid="stMetricValue"] {
         color: #58a6ff !important;
     }
-    
-    /* ボタンデザイン */
     div[data-testid="stButton"] button,
     div.stButton button {
         background-color: #1f6feb !important;
@@ -95,8 +85,6 @@ st.markdown("""
         -webkit-text-fill-color: #ffffff !important;
         font-weight: bold !important;
     }
-    
-    /* スクリーニング実行ボタン（プライマリ・レッド） */
     div[data-testid="stButton"] button[kind="primary"],
     div.stButton button[kind="primary"] {
         background-color: #ff4b4b !important;
@@ -112,8 +100,6 @@ st.markdown("""
         -webkit-text-fill-color: #ffffff !important;
         font-weight: bold !important;
     }
-    
-    /* CSVダウンロードボタン（グリーン系） */
     div[data-testid="stDownloadButton"] button,
     div[data-testid="stDownloadButton"] a,
     div.stDownloadButton button,
@@ -135,12 +121,10 @@ st.markdown("""
         -webkit-text-fill-color: #ffffff !important;
         font-weight: bold !important;
     }
-    
     dataframe, table {
         background-color: #161b22 !important;
         color: #f0f6fc !important;
     }
-    
     details {
         background-color: #161b22 !important;
         border: 1px solid #30363d !important;
@@ -157,15 +141,33 @@ st.markdown("""
 st.title("📈 株式買い候補銘柄 自動抽出システム")
 st.markdown("東証の主要個別銘柄（ETF除外）に基づき、アルゴリズムでブレイクアウト銘柄を抽出します。")
 
-# --- サイドバー：実行設定 ---
+# --- サイドバー：実行設定 ＆ キャッシュ操作 ---
 st.sidebar.header("⚙ 実行設定")
 target_date = st.sidebar.date_input("判定基準日（この日までのデータで判定）", value=datetime.today().date())
 target_date_str = target_date.strftime('%Y-%m-%d')
 
-st.info(f"📅 設定中の判定日: **{target_date_str}**")
+st.sidebar.markdown("---")
+st.sidebar.subheader("💾 データ取得・キャッシュ設定")
+data_mode = st.sidebar.radio(
+    "取得モード",
+    ["⚡ 高速キャッシュ優先（バックテスト推奨）", "🔄 ライブ最新データを強制取得（更新）"],
+    help="「高速キャッシュ優先」を選択すると、一度保存されたデータを再利用するためYahooへのリクエストを送らず、制限（429エラー）なしで数秒で実行できます。"
+)
+use_cache = "高速キャッシュ優先" in data_mode
+
+# 現在のキャッシュ件数を表示
+current_cache = load_local_cache(STOCK_CACHE_FILE)
+st.sidebar.caption(f"📦 現在保存中のキャッシュ: **{len(current_cache)} 銘柄分**")
+
+if st.sidebar.button("🗑 キャッシュを全消去して初期化"):
+    clear_all_cache()
+    st.sidebar.success("キャッシュを消去しました。")
+    st.rerun()
+
+st.info(f"📅 設定中の判定日: **{target_date_str}** ｜ モード: **{'キャッシュ高速実行' if use_cache else 'ライブ通信更新'}**")
 
 # --- 市場環境判定の表示 ---
-market_status, market_msg = analyze_market(target_date_str)
+market_status, market_msg = analyze_market(target_date_str, use_cache=use_cache)
 if "Risk-On" in market_status:
     st.success(f"【市場環境：Risk-On】 {market_msg}")
 elif "Risk-Off" in market_status:
@@ -179,16 +181,15 @@ st.markdown("---")
 if st.button("指定日でのスクリーニングを実行する", type="primary"):
     progress_bar = st.progress(0, text="市場データを取得準備中...")
     
-    with st.spinner("東証個別銘柄リスト（約3,000銘柄規模）を準備中..."):
+    with st.spinner("東証個別銘柄リストを準備中..."):
         stock_df = get_tse_stock_list()
         
     with st.spinner("スクリーニングを実行中..."):
-        result_df, meta_stats = run_screener_batch(stock_df, target_date_str, progress_bar)
+        result_df, meta_stats = run_screener_batch(stock_df, target_date_str, use_cache=use_cache, progress_bar=progress_bar)
         
     progress_bar.empty()
     st.success("解析が完了しました！")
     
-    # セッションステートに保存
     st.session_state['result_df'] = result_df
     st.session_state['meta_stats'] = meta_stats
     st.session_state['target_date_str'] = target_date_str
@@ -201,16 +202,14 @@ if 'result_df' in st.session_state:
     d_str = st.session_state.get('target_date_str', target_date_str)
     meta = st.session_state.get('meta_stats', {})
     
-    # 審査母数の明示（実在する有効銘柄数を表示）
     if meta:
-        st.info(f"📊 **審査母数**: 東証の実在個別株 **{meta.get('valid_stocks', 0)} 銘柄** の株価データを正常に審査完了")
+        st.info(f"📊 **審査母数**: 東証の実在個別株 **{meta.get('valid_stocks', 0)} 銘柄** の株価データを正常に審査完了（うち既存キャッシュ利用: **{meta.get('cached_count', 0)} 銘柄**）")
         
     st.subheader(f"📋 買い候補銘柄一覧（判定日: {d_str} / 該当数: {len(res_df)}件）")
     
     if res_df.empty:
         st.warning("条件に一致する銘柄は見つかりませんでした。")
     else:
-        # 画面表示用テーブル
         display_cols = ['コード', '企業名', '現在値', 'ピボット価格', '状態', '出来高倍率', '20日平均売買代金(億円)']
         st.dataframe(res_df[display_cols], use_container_width=True)
         
@@ -245,12 +244,11 @@ if 'result_df' in st.session_state:
             st.caption("※ 損切りライン(SL)はピボット価格とATR(20)から自動設定されます（買値より下を完全保証）。同日両到達時は保守的に損切り優先と判定します。")
             
         if st.button("🚀 この抽出銘柄のトレード結果を一括検証する"):
-            v_progress = st.progress(0, text="抽出銘柄の推移データを一括取得中...")
+            v_progress = st.progress(0, text="抽出銘柄の推移データを取得中...")
             val_df = batch_validate_trades(res_df, d_str, risk_reward_ratio=rrr, progress_bar=v_progress)
             st.session_state['val_df'] = val_df
             st.session_state['val_d_str'] = d_str
             
-        # 検証結果の描画
         if 'val_df' in st.session_state:
             val_df = st.session_state['val_df']
             
@@ -260,7 +258,7 @@ if 'result_df' in st.session_state:
                 pending_count = len(val_df[val_df['検証ステータス'].str.contains("未到来|待機中")])
                 
                 if pending_count == len(val_df):
-                    st.info(f"⏳ **検証結果**: 設定判定日（{d_str}）以降の相場データが存在しないため、全銘柄が**翌営業日の寄り付き待ち（待機中）**です。相場が開いてデータが更新された後に再度検証を行ってください。")
+                    st.info(f"⏳ **検証結果**: 設定判定日（{d_str}）以降の相場データが存在しないため、全銘柄が**翌営業日の寄り付き待ち（待機中）**です。")
                     st.dataframe(val_df[['コード', '企業名', '検証ステータス']], use_container_width=True)
                 else:
                     finished_trades = val_df[val_df['勝敗'].isin(['勝ち', '負け'])]
@@ -285,7 +283,6 @@ if 'result_df' in st.session_state:
                     ]
                     st.dataframe(val_df[val_display_cols], use_container_width=True)
                     
-                    # --- スクリーニング条件指標 ＆ トレード結果 の完全突合CSV作成 ---
                     val_subset = val_df.drop(columns=['企業名', 'ティッカー'], errors='ignore')
                     merged_export = pd.merge(export_df, val_subset, on='コード', how='left')
                     
