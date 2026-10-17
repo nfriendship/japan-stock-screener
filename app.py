@@ -135,11 +135,28 @@ st.markdown("""
         color: #58a6ff !important;
         font-weight: bold;
     }
+    /* タブのデザイン調整 */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        height: 45px;
+        background-color: #161b22;
+        border-radius: 6px 6px 0 0;
+        color: #c9d1d9;
+        padding: 0 16px;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #21262d !important;
+        color: #58a6ff !important;
+        font-weight: bold;
+        border-bottom: 2px solid #58a6ff !important;
+    }
     </style>
 """, unsafe_allow_html=True)
 
 st.title("📈 株式買い候補銘柄 自動抽出システム")
-st.markdown("東証の主要個別銘柄（ETF除外）に基づき、アルゴリズムでブレイクアウト銘柄を抽出します。")
+st.markdown("1,000件超のビッグデータ検証に基づき、**高勝率の本命S級銘柄** と **参考候補の次点A級銘柄** を高精度に自動選定します。")
 
 # --- サイドバー：実行設定 ＆ キャッシュ操作 ---
 st.sidebar.header("⚙ 実行設定")
@@ -187,7 +204,7 @@ if st.button("指定日でのスクリーニングを実行する", type="primar
     with st.spinner("東証個別銘柄リストを準備中..."):
         stock_df = get_tse_stock_list()
         
-    with st.spinner("スクリーニングを実行中..."):
+    with st.spinner("アルゴリズム解析を実行中..."):
         result_df, meta_stats = run_screener_batch(stock_df, target_date_str, use_cache=use_cache, progress_bar=progress_bar)
         
     progress_bar.empty()
@@ -208,28 +225,55 @@ if 'result_df' in st.session_state:
     meta = st.session_state.get('meta_stats', {})
     
     if meta:
-        st.info(f"📊 **審査母数**: 東証の実在個別株 **{meta.get('valid_stocks', 0)} 銘柄** の株価データを正常に審査完了（うち既存キャッシュ利用: **{meta.get('cached_count_before', 0)} 銘柄**）")
+        st.info(f"📊 **審査母数**: 東証の実在個別株 **{meta.get('valid_stocks', 0)} 銘柄** を審査（うち既存キャッシュ利用: **{meta.get('cached_count_before', 0)} 銘柄**）")
         
-    st.subheader(f"📋 買い候補銘柄一覧（判定日: {d_str} / 該当数: {len(res_df)}件）")
-    
     if res_df.empty:
-        st.warning("条件に一致する銘柄は見つかりませんでした。")
+        st.warning("厳格なスクリーニング条件に一致する銘柄は見つかりませんでした。")
     else:
-        display_cols = ['コード', '企業名', '現在値', 'ピボット価格', '状態', '出来高倍率', '20日平均売買代金(億円)']
-        st.dataframe(res_df[display_cols], use_container_width=True)
+        main_df = res_df[res_df['ランク'].str.contains('本命')]
+        sub_df = res_df[res_df['ランク'].str.contains('次点')]
         
-        st.markdown("### 🔍 各銘柄の選定理由・根拠の詳細確認")
-        for idx, row in res_df.iterrows():
-            with st.expander(f"【{row['コード']}】 {row['企業名']} （現在値: {row['現在値']}円 / 出来高倍率: {row['出来高倍率']}倍 / 売買代金: {row['20日平均売買代金(億円)']}億円）"):
-                st.markdown(row['💡 抽出理由・根拠詳細'])
-                
-        # --- スクリーニング単体のCSVダウンロード ---
+        st.subheader(f"📋 買い候補銘柄一覧（判定日: {d_str} ｜ 合計: {len(res_df)}件）")
+        
+        # タブで分かりやすく分類
+        tab1, tab2, tab3 = st.tabs([
+            f"🏆 本命・高勝率S級 ({len(main_df)}件)",
+            f"🥈 次点・参考候補A級 ({len(sub_df)}件)",
+            f"📑 全一覧 ({len(res_df)}件)"
+        ])
+        
+        display_cols = ['ランク', 'コード', '企業名', '現在値', 'ピボット価格', '状態', '出来高倍率', '20日平均売買代金(億円)', '52週高値乖離率(%)']
+        
+        with tab1:
+            if main_df.empty:
+                st.info("※ この判定日における本命S級銘柄はありませんでした。")
+            else:
+                st.dataframe(main_df[display_cols], use_container_width=True)
+                st.markdown("#### 🔍 本命S級の選定理由・詳細")
+                for _, row in main_df.iterrows():
+                    with st.expander(f"【{row['コード']}】 {row['企業名']} （現在値: {row['現在値']}円 / 出来高: {row['出来高倍率']}倍 / 代金: {row['20日平均売買代金(億円)']}億円）"):
+                        st.markdown(row['💡 抽出理由・根拠詳細'])
+                        
+        with tab2:
+            if sub_df.empty:
+                st.info("※ 次点A級銘柄はありませんでした。")
+            else:
+                st.dataframe(sub_df[display_cols], use_container_width=True)
+                st.markdown("#### 🔍 次点A級の選定理由・詳細")
+                for _, row in sub_df.iterrows():
+                    with st.expander(f"【{row['コード']}】 {row['企業名']} （現在値: {row['現在値']}円 / 出来高: {row['出来高倍率']}倍 / 代金: {row['20日平均売買代金(億円)']}億円）"):
+                        st.markdown(row['💡 抽出理由・根拠詳細'])
+                        
+        with tab3:
+            st.dataframe(res_df[display_cols], use_container_width=True)
+            
+        # CSVダウンロード
         export_df = res_df.copy()
         export_df.insert(0, '判定日', d_str)
         csv_screening = export_df.to_csv(index=False).encode('utf-8-sig')
         
         st.download_button(
-            label="📊 スクリーニング結果（全指標入り）をCSVダウンロード",
+            label="📊 スクリーニング結果（本命・次点全指標入り）をCSVダウンロード",
             data=csv_screening,
             file_name=f"vcp_screening_result_{d_str}.csv",
             mime="text/csv"
@@ -265,7 +309,7 @@ if 'result_df' in st.session_state:
                 
                 if pending_count == len(val_df):
                     st.info(f"⏳ **検証結果**: 設定判定日（{d_str}）以降の相場データが存在しないため、全銘柄が**翌営業日の寄り付き待ち（待機中）**です。")
-                    st.dataframe(val_df[['コード', '企業名', '検証ステータス']], use_container_width=True)
+                    st.dataframe(val_df[['ランク', 'コード', '企業名', '検証ステータス']], use_container_width=True)
                 else:
                     finished_trades = val_df[val_df['勝敗'].isin(['勝ち', '負け'])]
                     win_trades = val_df[val_df['勝敗'] == '勝ち']
@@ -275,21 +319,32 @@ if 'result_df' in st.session_state:
                     total_pnl_yen = val_df['損益額(円)'].sum()
                     active_count = len(val_df[val_df['勝敗'] == '保有中'])
                     
+                    # 本命 vs 次点の勝率比較
+                    main_val = val_df[val_df['ランク'].str.contains('本命')]
+                    main_finished = main_val[main_val['勝敗'].isin(['勝ち', '負け'])]
+                    main_wins = main_val[main_val['勝敗'] == '勝ち']
+                    main_win_rate = (len(main_wins) / len(main_finished) * 100) if len(main_finished) > 0 else 0.0
+                    
+                    sub_val = val_df[val_df['ランク'].str.contains('次点')]
+                    sub_finished = sub_val[sub_val['勝敗'].isin(['勝ち', '負け'])]
+                    sub_wins = sub_val[sub_val['勝敗'] == '勝ち']
+                    sub_win_rate = (len(sub_wins) / len(sub_finished) * 100) if len(sub_finished) > 0 else 0.0
+                    
                     st.markdown("#### 📊 パフォーマンス集計サマリー")
                     m1, m2, m3, m4 = st.columns(4)
-                    m1.metric("検証銘柄数", f"{len(val_df)} 銘柄")
-                    m2.metric("勝率（決済済み）", f"{win_rate:.1f} %", f"{len(win_trades)}勝 / {len(finished_trades)}決済")
-                    m3.metric("全銘柄 平均損益率", f"{avg_pnl:+.2f} %")
-                    m4.metric("現在保有中（含み推移）", f"{active_count} 銘柄", f"合計損益: {total_pnl_yen:+.1f}円")
+                    m1.metric("総検証数 / 決済済み", f"{len(val_df)} 銘柄", f"{len(finished_trades)} 決済完了")
+                    m2.metric("🏆 本命S級 勝率", f"{main_win_rate:.1f} %", f"{len(main_wins)}勝 / {len(main_finished)}決済")
+                    m3.metric("🥈 次点A級 勝率", f"{sub_win_rate:.1f} %", f"{len(sub_wins)}勝 / {len(sub_finished)}決済")
+                    m4.metric("全銘柄 平均損益率", f"{avg_pnl:+.2f} %", f"合計損益: {total_pnl_yen:+.1f}円")
                     
                     st.markdown("#### 📋 銘柄別トレード結果一覧（売買価格・損益詳細）")
                     val_display_cols = [
-                        'コード', '企業名', 'エントリー日', '買値(エントリー)', '売値(決済/現在値)', 
+                        'ランク', 'コード', '企業名', 'エントリー日', '買値(エントリー)', '売値(決済/現在値)', 
                         'SL価格', 'TP目標', '検証ステータス', '決済日/現在日', '損益額(円)', '損益率(%)', '保有日数'
                     ]
-                    st.dataframe(val_display_cols, use_container_width=True)
+                    st.dataframe(val_df[val_display_cols], use_container_width=True)
                     
-                    val_subset = val_df.drop(columns=['企業名', 'ティッカー'], errors='ignore')
+                    val_subset = val_df.drop(columns=['企業名', 'ティッカー', 'ランク'], errors='ignore')
                     merged_export = pd.merge(export_df, val_subset, on='コード', how='left')
                     
                     csv_merged = merged_export.to_csv(index=False).encode('utf-8-sig')

@@ -60,7 +60,7 @@ def merge_stock_df(old_df, new_df):
     return combined
 
 def get_tse_stock_list():
-    """東証個別銘柄リスト生成（ETF除外）"""
+    """東証個別銘柄リスト生成（ETF・REITは事前除外）"""
     major_companies = {
         "7203": "トヨタ自動車", "6758": "ソニーグループ", "9984": "ソフトバンクグループ", "8306": "三菱UFJフィナンシャルG",
         "6861": "キーエンス", "6594": "ニデック", "9432": "日本電信電話", "8035": "東京エレクトロン",
@@ -154,7 +154,6 @@ def analyze_market(target_date_str, use_cache=True):
         temp_df = market_cache["^N225"]
         first_d = pd.to_datetime(temp_df.index[0]).strftime('%Y-%m-%d')
         last_d = pd.to_datetime(temp_df.index[-1]).strftime('%Y-%m-%d')
-        # 過去も未来も足りていればキャッシュ利用
         if first_d <= needed_start_str and last_d >= target_date_str:
             df_n225 = temp_df
             
@@ -200,22 +199,19 @@ def analyze_market(target_date_str, use_cache=True):
 
 def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=None):
     """
-    判定日を起点とした動的取得 ＆ 増分蓄積型キャッシュスクリーニング
+    分析結果に基づく2段階分類（🏆本命S級 ＆ 🥈次点A級）スクリーニングエンジン
     """
     tickers = stock_df['Ticker'].tolist()
     total_stock_count = len(tickers)
     results = []
     
     target_dt = pd.to_datetime(target_date_str)
-    # 判定日から見て最低200営業日＋マージン（約450日前）が必要
     needed_start_dt = target_dt - timedelta(days=450)
     needed_start_str = needed_start_dt.strftime('%Y-%m-%d')
     
-    # 既存キャッシュのロード
     all_data = load_local_cache(STOCK_CACHE_FILE)
     cached_count_before = len(all_data)
     
-    # 不足銘柄の特定（未保存、未来データ不足、または過去データ不足）
     missing_tickers = []
     if not use_cache:
         missing_tickers = tickers
@@ -227,7 +223,6 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
                 t_df = all_data[t]
                 t_first_date = pd.to_datetime(t_df.index[0]).strftime('%Y-%m-%d')
                 t_last_date = pd.to_datetime(t_df.index[-1]).strftime('%Y-%m-%d')
-                # 過去データが足りない、または未来データが足りない場合は取得対象へ
                 if t_first_date > needed_start_str or t_last_date < target_date_str:
                     missing_tickers.append(t)
                     
@@ -247,7 +242,6 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
             df_chunk = None
             for attempt in range(2):
                 try:
-                    # 判定日に応じた十分な過去起点から現在まで一括取得
                     df_chunk = yf.download(chunk_tickers, start=needed_start_str, group_by='ticker', threads=True, progress=False)
                     if df_chunk is not None and not df_chunk.empty:
                         break
@@ -262,7 +256,6 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
                         else:
                             sub_df = df_chunk[t].dropna(how='all')
                         if not sub_df.empty:
-                            # 既存データと新データをマージしてキャッシュを育てる
                             all_data[t] = merge_stock_df(all_data.get(t), sub_df)
                     except:
                         continue
@@ -284,10 +277,17 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
             progress_bar.progress(min(progress, 100) / 100.0, text=f"スクリーニング解析中... ({analyzed_count} / {total_valid} 有効銘柄)")
             
         try:
+            match_row = stock_df[stock_df['Ticker'] == ticker]
+            code = match_row['Code'].values[0] if not match_row.empty else ticker.replace('.T', '')
+            name = match_row['Name'].values[0] if not match_row.empty else f"東証_{code}"
+            
+            # --- 0. ETF・REIT等のノイズ除外 ---
+            if any(kw in name for kw in ['ETF', '上場投信', '投資法人', 'REIT', '投信']):
+                continue
+                
             df.index = pd.to_datetime(df.index).strftime('%Y-%m-%d')
             sub_df = df[df.index <= target_date_str].copy()
             
-            # 200日線・52週高安の算出に最低200営業日が必要
             if len(sub_df) < 200:
                 continue
                 
@@ -295,16 +295,19 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
             current_vol = sub_df['Volume'].iloc[-1]
             current_date = sub_df.index[-1]
             
-            # --- 1. 流動性＆基本フィルター ---
+            # 株価500円未満は除外
             if current_close < 500:
                 continue
-            
+                
             sub_df['Turnover'] = sub_df['Close'] * sub_df['Volume']
             avg_turnover = sub_df['Turnover'].rolling(20).mean().iloc[-1]
-            if avg_turnover < 500000000:
+            turnover_oku = avg_turnover / 100000000.0
+            
+            # 最低でも売買代金5億円以上
+            if turnover_oku < 5.0:
                 continue
                 
-            # --- 2. トレンドテンプレート ---
+            # --- トレンドテンプレート基礎 ---
             sma50 = sub_df['Close'].rolling(50).mean().iloc[-1]
             sma150 = sub_df['Close'].rolling(150).mean().iloc[-1]
             sma200 = sub_df['Close'].rolling(200).mean().iloc[-1]
@@ -312,56 +315,98 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
             high_52w = sub_df['High'].tail(250).max()
             low_52w = sub_df['Low'].tail(250).min()
             
-            cond_trend = (
+            cond_trend_base = (
                 (current_close > sma150) and
                 (sma150 > sma200) and
                 (sma200 > sma200_20days_ago) and
                 (current_close >= 1.25 * low_52w) and
                 (current_close >= 0.75 * high_52w)
             )
-            
-            if not cond_trend:
+            if not cond_trend_base:
                 continue
                 
-            # --- 3. ピボット価格と出来高基準 ---
             pivot_price = sub_df['High'].tail(20).iloc[:-1].max()
             avg_vol_20 = sub_df['Volume'].rolling(20).mean().iloc[-1]
-            
-            # --- 4. 判定ロジック ---
-            is_breakout = (current_close >= pivot_price) and (current_vol >= avg_vol_20 * 1.5)
-            is_near_pivot = (pivot_price * 0.97 <= current_close < pivot_price)
-            
-            if not (is_breakout or is_near_pivot):
-                continue
-                
-            vol_ratio = current_vol / avg_vol_20 if avg_vol_20 > 0 else 0
+            vol_ratio = (current_vol / avg_vol_20) if avg_vol_20 > 0 else 0
             dist_from_pivot = ((current_close - pivot_price) / pivot_price) * 100
             diff_from_high_52w = ((current_close - high_52w) / high_52w) * 100
             rise_from_low_52w = ((current_close - low_52w) / low_52w) * 100
             
-            match_row = stock_df[stock_df['Ticker'] == ticker]
-            code = match_row['Code'].values[0] if not match_row.empty else ticker.replace('.T', '')
-            name = match_row['Name'].values[0] if not match_row.empty else f"東証_{code}"
+            # ==============================================================
+            # 🎯 分析結果を反映した2層（本命S級 vs 次点A級）判定ロジック
+            # ==============================================================
+            rank = None
+            status_label = None
+            reason_detail = None
             
-            if is_breakout:
-                status_label = "🚀 【ブレイク当日】新高値突破＆出来高急増"
-                reason_detail = (
-                    f"**判定日 ({current_date}) 時点の状況**:\n"
-                    f"- **株価/ピボット**: 終値 {current_close:.1f}円 が過去20日高値（{pivot_price:.1f}円）を上抜け（ブレイク達成）。\n"
-                    f"- **出来高倍率**: 当日出来高は20日平均の **{vol_ratio:.2f}倍**（基準1.5倍クリア）。機関投資家の買い参入を示唆。\n"
-                    f"- **トレンド状態**: 200日線（{sma200:.1f}円）が上向きで、主要移動平均線のパーフェクトオーダーを形成中。"
-                )
-            else:
-                status_label = "⏳ 【ブレイク前夜・VCP収縮】ピボット近傍で推移中"
-                reason_detail = (
-                    f"**判定日 ({current_date}) 時点の状況**:\n"
-                    f"- **株価/ピボット**: 終値 {current_close:.1f}円 はピボット価格（{pivot_price:.1f}円）に対して **{dist_from_pivot:+.2f}%** の至近距離に位置。\n"
-                    f"- **VCP状態**: 売り圧力が枯れ、ボラティリティが収縮しながら上値抵抗線（ピボット）の真下でベースを形成中。\n"
-                    f"- **出来高倍率**: 20日平均比 **{vol_ratio:.2f}倍**（今後ブレイク時の出来高急増に要注目）。\n"
-                    f"- **トレンド状態**: トレンドテンプレートの厳格な条件をすべてクリアし、本格上昇のスタンバイ状態。"
-                )
+            # 基本状態判定
+            raw_breakout = (current_close >= pivot_price) and (vol_ratio >= 1.5)
+            raw_near_pivot = (-3.0 <= dist_from_pivot < 0.0)
+            
+            if not (raw_breakout or raw_near_pivot):
+                continue
+                
+            # ----------------------------------------------------------
+            # 🏆 【本命・高勝率S級】判定条件
+            # ----------------------------------------------------------
+            is_main_tier = False
+            if turnover_oku >= 20.0 and diff_from_high_52w >= -5.0:
+                if raw_breakout and (1.5 <= vol_ratio <= 3.0):
+                    # ブレイク当日: 出来高適正急増(1.5〜3.0倍)・高値張り付き
+                    is_main_tier = True
+                    rank = "🏆 本命 (S級)"
+                    status_label = "🏆【本命・ブレイク当日】新高値突破 ＆ 適正出来高急増"
+                    reason_detail = (
+                        f"**【本命S級・高勝率選定理由】**:\n"
+                        f"- **出来高倍率**: 20日平均の **{vol_ratio:.2f}倍**（勝ち組特有の1.5〜3.0倍の適正急増。過熱なし）。\n"
+                        f"- **流動性**: 20日平均売買代金 **{turnover_oku:.1f}億円**（大口機関投資家が参入可能な20億円以上クリア）。\n"
+                        f"- **高値圏維持**: 52週高値からわずか **{diff_from_high_52w:+.2f}%**（シコリ玉なしの青天井状態）。\n"
+                        f"- **株価/ピボット**: 終値 {current_close:.1f}円 が過去20日高値（{pivot_price:.1f}円）を完全上抜け。"
+                    )
+                elif raw_near_pivot and (vol_ratio < 1.2) and (-2.5 <= dist_from_pivot <= -0.1):
+                    # ブレイク前夜: 売り枯れ(出来高1.2倍未満)・ピボット直下張り付き
+                    is_main_tier = True
+                    rank = "🏆 本命 (S級)"
+                    status_label = "🏆【本命・ブレイク前夜】VCP売り枯れ ＆ ピボット直下待機"
+                    reason_detail = (
+                        f"**【本命S級・高勝率選定理由】**:\n"
+                        f"- **売り枯れ確認**: 出来高倍率 **{vol_ratio:.2f}倍**（勝ち組に共通する1.2倍未満の明確な出来高激減/ドライアップ）。\n"
+                        f"- **ピボット直下**: ピボット価格から **{dist_from_pivot:+.2f}%** の至近距離でエネルギー充填中（-2.5%以内クリア）。\n"
+                        f"- **流動性**: 20日平均売買代金 **{turnover_oku:.1f}億円**（20億円以上の強固な基盤）。\n"
+                        f"- **高値圏維持**: 52週高値から **{diff_from_high_52w:+.2f}%** の最強トレンド。"
+                    )
+                    
+            # ----------------------------------------------------------
+            # 🥈 【次点・参考候補A級】判定条件
+            # ----------------------------------------------------------
+            if not is_main_tier:
+                # 売買代金10億円以上 または 高値から-8%以内
+                if turnover_oku >= 10.0 and diff_from_high_52w >= -8.0:
+                    rank = "🥈 次点 (A級)"
+                    if raw_breakout:
+                        status_label = "🥈【次点・ブレイク当日】勢い十分の突破銘柄"
+                        reason_detail = (
+                            f"**【次点A級・参考候補理由】**:\n"
+                            f"- **ブレイク状況**: 終値 {current_close:.1f}円 がピボット（{pivot_price:.1f}円）を突破。\n"
+                            f"- **出来高倍率**: 20日平均比 **{vol_ratio:.2f}倍**（{'3.0倍超の急増・短期過熱にやや警戒' if vol_ratio > 3.0 else '良好な出来高増'}）。\n"
+                            f"- **売買代金**: **{turnover_oku:.1f}億円**（10億円以上の流動性を確保）。\n"
+                            f"- **高値乖離**: 52週高値比 **{diff_from_high_52w:+.2f}%**。"
+                        )
+                    else:
+                        status_label = "🥈【次点・ブレイク前夜】ピボット近傍のモミ合い"
+                        reason_detail = (
+                            f"**【次点A級・参考候補理由】**:\n"
+                            f"- **株価位置**: ピボット（{pivot_price:.1f}円）から **{dist_from_pivot:+.2f}%**。\n"
+                            f"- **出来高倍率**: 20日平均比 **{vol_ratio:.2f}倍**（完全な売り枯れ待ちの状態）。\n"
+                            f"- **売買代金**: **{turnover_oku:.1f}億円**（流動性10億円以上クリア）。"
+                        )
+                        
+            # 本命でも次点でもない（売買代金10億未満や高値から離れすぎている等）は除外
+            if rank is None:
+                continue
                 
             results.append({
+                'ランク': rank,
                 'コード': code,
                 'ティッカー': ticker,
                 '企業名': name,
@@ -370,15 +415,15 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
                 'ピボット乖離率(%)': round(dist_from_pivot, 2),
                 '状態': status_label,
                 '出来高倍率': round(vol_ratio, 2),
+                '20日平均売買代金(億円)': round(turnover_oku, 2),
+                '52週高値乖離率(%)': round(diff_from_high_52w, 2),
                 '当日出来高': int(current_vol),
                 '20日平均出来高': int(avg_vol_20),
-                '20日平均売買代金(億円)': round(avg_turnover / 100000000, 2),
                 'SMA50': round(sma50, 1),
                 'SMA150': round(sma150, 1),
                 'SMA200': round(sma200, 1),
                 '52週高値': round(high_52w, 1),
                 '52週安値': round(low_52w, 1),
-                '52週高値乖離率(%)': round(diff_from_high_52w, 2),
                 '52週安値上昇率(%)': round(rise_from_low_52w, 2),
                 '💡 抽出理由・根拠詳細': reason_detail
             })
@@ -432,6 +477,7 @@ def batch_validate_trades(screened_df, signal_date_str, risk_reward_ratio=2.5, p
         ticker = row['ティッカー']
         code = row['コード']
         name = row['企業名']
+        rank = row.get('ランク', '-')
         
         if progress_bar:
             prog_val = (idx + 1) / total
@@ -448,6 +494,7 @@ def batch_validate_trades(screened_df, signal_date_str, risk_reward_ratio=2.5, p
             
             if future_df.empty:
                 validation_results.append({
+                    'ランク': rank,
                     'コード': code,
                     'ティッカー': ticker,
                     '企業名': name,
@@ -535,6 +582,7 @@ def batch_validate_trades(screened_df, signal_date_str, risk_reward_ratio=2.5, p
                     break
                     
             validation_results.append({
+                'ランク': rank,
                 'コード': code,
                 'ティッカー': ticker,
                 '企業名': name,
