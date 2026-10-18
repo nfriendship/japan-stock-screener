@@ -295,7 +295,6 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
             current_vol = sub_df['Volume'].iloc[-1]
             current_date = sub_df.index[-1]
             
-            # 株価500円未満は除外
             if current_close < 500:
                 continue
             
@@ -303,11 +302,9 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
             avg_turnover = sub_df['Turnover'].rolling(20).mean().iloc[-1]
             turnover_oku = avg_turnover / 100000000.0
             
-            # 最低流動性：売買代金5億円以上
             if turnover_oku < 5.0:
                 continue
                 
-            # --- トレンドテンプレート基礎 ---
             sma50 = sub_df['Close'].rolling(50).mean().iloc[-1]
             sma150 = sub_df['Close'].rolling(150).mean().iloc[-1]
             sma200 = sub_df['Close'].rolling(200).mean().iloc[-1]
@@ -331,9 +328,8 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
             dist_from_pivot = ((current_close - pivot_price) / pivot_price) * 100
             diff_from_high_52w = ((current_close - high_52w) / high_52w) * 100
             rise_from_low_52w = ((current_close - low_52w) / low_52w) * 100
-            sma200_bias = ((current_close - sma200) / sma200) * 100  # 200日線乖離率
+            sma200_bias = ((current_close - sma200) / sma200) * 100
             
-            # 基本状態判定
             raw_breakout = (current_close >= pivot_price) and (vol_ratio >= 1.5)
             raw_near_pivot = (-3.0 <= dist_from_pivot < 0.0)
             
@@ -346,11 +342,6 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
             
             # ----------------------------------------------------------
             # 🏆 【本命・高勝率S級】判定条件
-            # 1. 売買代金 >= 20億円
-            # 2. 52週高値乖離率 >= -5.0%
-            # 3. 【第2弾追加】レイトステージ排除: 52週安値上昇率 <= 150.0% かつ SMA200乖離率 <= 25.0%
-            # 4. ブレイク前夜: 出来高 < 1.2倍 ＆ ピボット直下 -2.5%〜-0.1%
-            # 5. ブレイク当日: 出来高 1.5〜3.0倍（過熱除外）
             # ----------------------------------------------------------
             is_main_tier = False
             if (turnover_oku >= 20.0 and 
@@ -364,9 +355,9 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
                     status_label = "🏆【本命・ブレイク当日】適正出来高突破（レイトステージ過熱なし）"
                     reason_detail = (
                         f"**【本命S級・選定理由】**:\n"
-                        f"- **出来高倍率**: **{vol_ratio:.2f}倍**（勝ち組特有の1.5〜3.0倍の適正急増。過熱なし）。\n"
-                        f"- **レイトステージ排除クリア**: 安値上昇率 **{rise_from_low_52w:.1f}%** (基準150%以下)、200日線乖離 **{sma200_bias:+.1f}%** (基準25%以下)。天井崩壊リスクなし。\n"
-                        f"- **流動性**: 20日平均売買代金 **{turnover_oku:.1f}億円**（大口機関投資家が参入する20億円以上）。\n"
+                        f"- **出来高倍率**: **{vol_ratio:.2f}倍**（勝ち組特有の1.5〜3.0倍。過熱なし）。\n"
+                        f"- **レイトステージ排除クリア**: 安値上昇率 **{rise_from_low_52w:.1f}%** (基準150%以下)、200日線乖離 **{sma200_bias:+.1f}%** (基準25%以下)。\n"
+                        f"- **流動性**: 20日平均売買代金 **{turnover_oku:.1f}億円**（大口機関投資家参入）。\n"
                         f"- **高値圏維持**: 52週高値からわずか **{diff_from_high_52w:+.2f}%**。"
                     )
                 elif raw_near_pivot and (vol_ratio < 1.2) and (-2.5 <= dist_from_pivot <= -0.1):
@@ -375,15 +366,14 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
                     status_label = "🏆【本命・ブレイク前夜】VCP売り枯れ ＆ ピボット直下待機"
                     reason_detail = (
                         f"**【本命S級・選定理由】**:\n"
-                        f"- **売り枯れ確認**: 出来高倍率 **{vol_ratio:.2f}倍**（1.2倍未満の明確な売り圧力枯渇/ドライアップ）。\n"
-                        f"- **ピボット直下**: ピボット価格から **{dist_from_pivot:+.2f}%** の至近距離（-2.5%以内）。\n"
+                        f"- **売り枯れ確認**: 出来高倍率 **{vol_ratio:.2f}倍**（1.2倍未満の明確な売り枯れ）。\n"
+                        f"- **ピボット直下**: ピボット価格から **{dist_from_pivot:+.2f}%** の至近距離。\n"
                         f"- **レイトステージ排除クリア**: 安値上昇率 **{rise_from_low_52w:.1f}%**、200日線乖離 **{sma200_bias:+.1f}%**。\n"
                         f"- **流動性**: 20日平均売買代金 **{turnover_oku:.1f}億円**。"
                     )
                     
             # ----------------------------------------------------------
             # 🥈 【次点・参考候補A級】判定条件
-            # 売買代金10億円以上、高値から-8%以内、過度なバブル（安値上昇200%超）は抑制
             # ----------------------------------------------------------
             if not is_main_tier:
                 if turnover_oku >= 10.0 and diff_from_high_52w >= -8.0 and rise_from_low_52w <= 200.0:
@@ -393,7 +383,7 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
                         reason_detail = (
                             f"**【次点A級・参考候補理由】**:\n"
                             f"- **ブレイク状況**: 終値 {current_close:.1f}円 がピボット（{pivot_price:.1f}円）を突破。\n"
-                            f"- **出来高倍率**: **{vol_ratio:.2f}倍**（{'3.0倍超の急増・短期過熱に警戒' if vol_ratio > 3.0 else '良好な出来高'}）。\n"
+                            f"- **出来高倍率**: **{vol_ratio:.2f}倍**。\n"
                             f"- **売買代金**: **{turnover_oku:.1f}億円**、高値乖離: **{diff_from_high_52w:+.2f}%**。"
                         )
                     else:
@@ -448,7 +438,7 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
 
 def batch_validate_trades(screened_df, signal_date_str, risk_reward_ratio=2.5, progress_bar=None):
     """
-    【第2弾プロ仕様】逆指値ピボット突破約定 ＆ 未ブレイク自動見送りシミュレーション
+    逆指値ピボット突破約定 ＆ 未ブレイク自動見送りシミュレーション
     """
     if screened_df.empty:
         return pd.DataFrame()
@@ -521,7 +511,6 @@ def batch_validate_trades(screened_df, signal_date_str, risk_reward_ratio=2.5, p
                 })
                 continue
                 
-            # ATR(20)の算出
             high_low = past_df['High'] - past_df['Low']
             high_cp = np.abs(past_df['High'] - past_df['Close'].shift())
             low_cp = np.abs(past_df['Low'] - past_df['Close'].shift())
@@ -530,24 +519,19 @@ def batch_validate_trades(screened_df, signal_date_str, risk_reward_ratio=2.5, p
             if pd.isna(atr20) or atr20 <= 0:
                 atr20 = past_df['Close'].iloc[-1] * 0.02
 
-            # ==============================================================
-            # 🎯 逆指値（Stop Order）ブレイクアウト約定シミュレーション
-            # 翌営業日以降、最大5営業日以内に High >= pivot_price に達したか？
-            # ==============================================================
+            # 逆指値ピボット突破判定（5営業日以内）
             breakout_occurred = False
             entry_date = None
             entry_price = None
             
-            scan_period = future_df.head(5) # 5営業日以内
+            scan_period = future_df.head(5)
             for d_date, d_row in scan_period.iterrows():
                 if d_row['High'] >= pivot_price:
                     breakout_occurred = True
                     entry_date = d_date
-                    # 寄り付きがすでにピボットを上回っていれば始値、そうでなければピボット価格で逆指値約定
                     entry_price = max(d_row['Open'], pivot_price)
                     break
                     
-            # 5営業日以内にブレイクしなかった場合は【見送り（ノー・トレード）】
             if not breakout_occurred:
                 validation_results.append({
                     'ランク': rank,
@@ -568,7 +552,6 @@ def batch_validate_trades(screened_df, signal_date_str, risk_reward_ratio=2.5, p
                 })
                 continue
                 
-            # ブレイク約定後の損切り・利確ライン設定
             calc_sl = max(pivot_price * 0.95, pivot_price - (1.5 * atr20))
             sl_price = min(calc_sl, entry_price - (1.5 * atr20), entry_price * 0.95)
             
@@ -579,7 +562,6 @@ def batch_validate_trades(screened_df, signal_date_str, risk_reward_ratio=2.5, p
                 
             tp_price = entry_price + (risk_amount * risk_reward_ratio)
             
-            # エントリー日以降の値動きシミュレーション
             trade_period_df = future_df.loc[entry_date:]
             current_last_close = trade_period_df['Close'].iloc[-1]
             pnl_amount = current_last_close - entry_price
@@ -595,7 +577,6 @@ def batch_validate_trades(screened_df, signal_date_str, risk_reward_ratio=2.5, p
                 d_low = d_row['Low']
                 d_high = d_row['High']
                 
-                # エントリー当日のみ、高値は entry_price 以上として評価
                 if d_idx == entry_date:
                     d_high = max(d_high, entry_price)
                     

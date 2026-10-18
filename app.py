@@ -240,7 +240,9 @@ if 'result_df' in st.session_state:
             f"📑 全一覧 ({len(res_df)}件)"
         ])
         
-        display_cols = ['ランク', 'コード', '企業名', '現在値', 'ピボット価格', '状態', '出来高倍率', '20日平均売買代金(億円)', '52週高値乖離率(%)', '52週安値上昇率(%)', 'SMA200乖離率(%)']
+        # 安全ガード付き表示列（存在する列のみを安全に抽出）
+        preferred_cols = ['ランク', 'コード', '企業名', '現在値', 'ピボット価格', '状態', '出来高倍率', '20日平均売買代金(億円)', '52週高値乖離率(%)', '52週安値上昇率(%)', 'SMA200乖離率(%)']
+        display_cols = [c for c in preferred_cols if c in res_df.columns]
         
         with tab1:
             if main_df.empty:
@@ -249,7 +251,8 @@ if 'result_df' in st.session_state:
                 st.dataframe(main_df[display_cols], use_container_width=True)
                 st.markdown("#### 🔍 本命S級の選定理由・詳細")
                 for _, row in main_df.iterrows():
-                    with st.expander(f"【{row['コード']}】 {row['企業名']} （現在値: {row['現在値']}円 / 出来高: {row['出来高倍率']}倍 / 代金: {row['20日平均売買代金(億円)']}億円 / 200日線乖離: {row['SMA200乖離率(%)']:+.1f}%）"):
+                    extra_info = f" / 200日線乖離: {row['SMA200乖離率(%)']:+.1f}%" if 'SMA200乖離率(%)' in row else ""
+                    with st.expander(f"【{row['コード']}】 {row['企業名']} （現在値: {row['現在値']}円 / 出来高: {row['出来高倍率']}倍 / 代金: {row['20日平均売買代金(億円)']}億円{extra_info}）"):
                         st.markdown(row['💡 抽出理由・根拠詳細'])
                         
         with tab2:
@@ -259,7 +262,8 @@ if 'result_df' in st.session_state:
                 st.dataframe(sub_df[display_cols], use_container_width=True)
                 st.markdown("#### 🔍 次点A級の選定理由・詳細")
                 for _, row in sub_df.iterrows():
-                    with st.expander(f"【{row['コード']}】 {row['企業名']} （現在値: {row['現在値']}円 / 出来高: {row['出来高倍率']}倍 / 代金: {row['20日平均売買代金(億円)']}億円）"):
+                    extra_info = f" / 200日線乖離: {row['SMA200乖離率(%)']:+.1f}%" if 'SMA200乖離率(%)' in row else ""
+                    with st.expander(f"【{row['コード']}】 {row['企業名']} （現在値: {row['現在値']}円 / 出来高: {row['出来高倍率']}倍 / 代金: {row['20日平均売買代金(億円)']}億円{extra_info}）"):
                         st.markdown(row['💡 抽出理由・根拠詳細'])
                         
         with tab3:
@@ -317,12 +321,10 @@ if 'result_df' in st.session_state:
                     win_rate = (len(win_trades) / len(finished_trades) * 100) if len(finished_trades) > 0 else 0.0
                     avg_pnl = finished_trades['損益率(%)'].mean() if len(finished_trades) > 0 else 0.0
                     
-                    # プロフィットファクター（PF）の計算
                     total_win_yen = win_trades['損益額(円)'].sum() if not win_trades.empty else 0.0
                     total_loss_yen = abs(loss_trades['損益額(円)'].sum()) if not loss_trades.empty else 0.0
                     pf = (total_win_yen / total_loss_yen) if total_loss_yen > 0 else (99.9 if total_win_yen > 0 else 0.0)
                     
-                    # 本命 vs 次点の勝率比較
                     main_val = val_df[val_df['ランク'].str.contains('本命')]
                     main_finished = main_val[main_val['勝敗'].isin(['勝ち', '負け'])]
                     main_wins = main_val[main_val['勝敗'] == '勝ち']
