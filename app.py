@@ -135,7 +135,6 @@ st.markdown("""
         color: #58a6ff !important;
         font-weight: bold;
     }
-    /* タブのデザイン調整 */
     .stTabs [data-baseweb="tab-list"] {
         gap: 8px;
     }
@@ -156,7 +155,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("📈 株式買い候補銘柄 自動抽出システム")
-st.markdown("1,000件超のビッグデータ検証に基づき、**高勝率の本命S級銘柄** と **参考候補の次点A級銘柄** を高精度に自動選定します。")
+st.markdown("ビッグデータ検証に基づく **「本命S級（過熱・バブル排除）」** と **「逆指値ピボット突破約定」** を備えたプロ仕様システムです。")
 
 # --- サイドバー：実行設定 ＆ キャッシュ操作 ---
 st.sidebar.header("⚙ 実行設定")
@@ -191,9 +190,9 @@ market_status, market_msg = analyze_market(target_date_str, use_cache=use_cache)
 if "Risk-On" in market_status:
     st.success(f"【市場環境：Risk-On】 {market_msg}")
 elif "Risk-Off" in market_status:
-    st.warning(f"【市場環境：Risk-Off】 {market_msg}")
+    st.error(f"【市場環境：Risk-Off】 {market_msg} ⚠️ ブレイクアウトのダマシ確率が極めて高いため、本命銘柄であっても買いは見送りを強く推奨します。")
 else:
-    st.info(f"【市場環境：Neutral】 {market_msg}")
+    st.warning(f"【市場環境：Neutral】 {market_msg} ⚠️ トレンドの方向感が曖昧なため、厳選した本命S級のみに絞るか、ロットを落としたトレードを推奨します。")
 
 st.markdown("---")
 
@@ -235,14 +234,13 @@ if 'result_df' in st.session_state:
         
         st.subheader(f"📋 買い候補銘柄一覧（判定日: {d_str} ｜ 合計: {len(res_df)}件）")
         
-        # タブで分かりやすく分類
         tab1, tab2, tab3 = st.tabs([
             f"🏆 本命・高勝率S級 ({len(main_df)}件)",
             f"🥈 次点・参考候補A級 ({len(sub_df)}件)",
             f"📑 全一覧 ({len(res_df)}件)"
         ])
         
-        display_cols = ['ランク', 'コード', '企業名', '現在値', 'ピボット価格', '状態', '出来高倍率', '20日平均売買代金(億円)', '52週高値乖離率(%)']
+        display_cols = ['ランク', 'コード', '企業名', '現在値', 'ピボット価格', '状態', '出来高倍率', '20日平均売買代金(億円)', '52週高値乖離率(%)', '52週安値上昇率(%)', 'SMA200乖離率(%)']
         
         with tab1:
             if main_df.empty:
@@ -251,7 +249,7 @@ if 'result_df' in st.session_state:
                 st.dataframe(main_df[display_cols], use_container_width=True)
                 st.markdown("#### 🔍 本命S級の選定理由・詳細")
                 for _, row in main_df.iterrows():
-                    with st.expander(f"【{row['コード']}】 {row['企業名']} （現在値: {row['現在値']}円 / 出来高: {row['出来高倍率']}倍 / 代金: {row['20日平均売買代金(億円)']}億円）"):
+                    with st.expander(f"【{row['コード']}】 {row['企業名']} （現在値: {row['現在値']}円 / 出来高: {row['出来高倍率']}倍 / 代金: {row['20日平均売買代金(億円)']}億円 / 200日線乖離: {row['SMA200乖離率(%)']:+.1f}%）"):
                         st.markdown(row['💡 抽出理由・根拠詳細'])
                         
         with tab2:
@@ -267,33 +265,32 @@ if 'result_df' in st.session_state:
         with tab3:
             st.dataframe(res_df[display_cols], use_container_width=True)
             
-        # CSVダウンロード
         export_df = res_df.copy()
         export_df.insert(0, '判定日', d_str)
         csv_screening = export_df.to_csv(index=False).encode('utf-8-sig')
         
         st.download_button(
-            label="📊 スクリーニング結果（本命・次点全指標入り）をCSVダウンロード",
+            label="📊 スクリーニング結果（全指標入り）をCSVダウンロード",
             data=csv_screening,
             file_name=f"vcp_screening_result_{d_str}.csv",
             mime="text/csv"
         )
         
         # ==============================================================
-        # ⚡ 自動一括トレード検証（バックテスト）セクション
+        # ⚡ 逆指値ピボット突破約定トレード検証セクション
         # ==============================================================
         st.markdown("---")
-        st.subheader("⚡ 抽出銘柄のトレード結果・一括検証")
-        st.markdown("抽出された全銘柄について、**翌営業日寄り付きでエントリーした後の売買結果・現在の含み損益** を検証します。")
+        st.subheader("⚡ 抽出銘柄のトレード結果・一括検証（逆指値ブレイク約定方式）")
+        st.markdown("判定日以降、**ピボット価格を上抜けた瞬間（逆指値）に約定した銘柄のみを追跡検証**します（抜けずに下落した銘柄は「見送り」として損切りを未然回避）。")
         
         v_col1, v_col2 = st.columns([1, 2])
         with v_col1:
             rrr = st.slider("利確目標のリスク倍率 (RRR)", min_value=1.5, max_value=4.0, value=2.5, step=0.5, key="batch_rrr")
         with v_col2:
-            st.caption("※ 損切りライン(SL)はピボット価格とATR(20)から自動設定されます（買値より下を完全保証）。同日両到達時は保守的に損切り優先と判定します。")
+            st.caption("※ 損切りライン(SL)はピボット価格とATR(20)から自動設定。5営業日以内にピボットを突破しなかった銘柄はノー・トレードとして除外されます。")
             
         if st.button("🚀 この抽出銘柄のトレード結果を一括検証する"):
-            v_progress = st.progress(0, text="抽出銘柄の推移データを取得中...")
+            v_progress = st.progress(0, text="抽出銘柄のブレイク推移を追跡検証中...")
             val_df = batch_validate_trades(res_df, d_str, risk_reward_ratio=rrr, progress_bar=v_progress)
             st.session_state['val_df'] = val_df
             st.session_state['val_d_str'] = d_str
@@ -305,19 +302,25 @@ if 'result_df' in st.session_state:
             if val_df.empty:
                 st.warning("検証対象のデータがありませんでした。")
             else:
-                pending_count = len(val_df[val_df['検証ステータス'].str.contains("未到来|待機中")])
+                pending_count = len(val_df[val_df['検証ステータス'].str.contains("待機中")])
                 
                 if pending_count == len(val_df):
-                    st.info(f"⏳ **検証結果**: 設定判定日（{d_str}）以降の相場データが存在しないため、全銘柄が**翌営業日の寄り付き待ち（待機中）**です。")
+                    st.info(f"⏳ **検証結果**: 設定判定日（{d_str}）以降の相場データが存在しないため、全銘柄が**待機中**です。")
                     st.dataframe(val_df[['ランク', 'コード', '企業名', '検証ステータス']], use_container_width=True)
                 else:
                     finished_trades = val_df[val_df['勝敗'].isin(['勝ち', '負け'])]
                     win_trades = val_df[val_df['勝敗'] == '勝ち']
+                    loss_trades = val_df[val_df['勝敗'] == '負け']
+                    skipped_count = len(val_df[val_df['勝敗'] == '見送り'])
+                    active_count = len(val_df[val_df['勝敗'] == '保有中'])
                     
                     win_rate = (len(win_trades) / len(finished_trades) * 100) if len(finished_trades) > 0 else 0.0
-                    avg_pnl = val_df['損益率(%)'].mean()
-                    total_pnl_yen = val_df['損益額(円)'].sum()
-                    active_count = len(val_df[val_df['勝敗'] == '保有中'])
+                    avg_pnl = finished_trades['損益率(%)'].mean() if len(finished_trades) > 0 else 0.0
+                    
+                    # プロフィットファクター（PF）の計算
+                    total_win_yen = win_trades['損益額(円)'].sum() if not win_trades.empty else 0.0
+                    total_loss_yen = abs(loss_trades['損益額(円)'].sum()) if not loss_trades.empty else 0.0
+                    pf = (total_win_yen / total_loss_yen) if total_loss_yen > 0 else (99.9 if total_win_yen > 0 else 0.0)
                     
                     # 本命 vs 次点の勝率比較
                     main_val = val_df[val_df['ランク'].str.contains('本命')]
@@ -332,10 +335,10 @@ if 'result_df' in st.session_state:
                     
                     st.markdown("#### 📊 パフォーマンス集計サマリー")
                     m1, m2, m3, m4 = st.columns(4)
-                    m1.metric("総検証数 / 決済済み", f"{len(val_df)} 銘柄", f"{len(finished_trades)} 決済完了")
+                    m1.metric("総抽出 / 約定決済", f"{len(val_df)} 銘柄", f"{len(finished_trades)} 決済 (🚫見送り: {skipped_count}件)")
                     m2.metric("🏆 本命S級 勝率", f"{main_win_rate:.1f} %", f"{len(main_wins)}勝 / {len(main_finished)}決済")
                     m3.metric("🥈 次点A級 勝率", f"{sub_win_rate:.1f} %", f"{len(sub_wins)}勝 / {len(sub_finished)}決済")
-                    m4.metric("全銘柄 平均損益率", f"{avg_pnl:+.2f} %", f"合計損益: {total_pnl_yen:+.1f}円")
+                    m4.metric("プロフィットファクター (PF)", f"{pf:.2f}", f"決済平均損益: {avg_pnl:+.2f}%")
                     
                     st.markdown("#### 📋 銘柄別トレード結果一覧（売買価格・損益詳細）")
                     val_display_cols = [
