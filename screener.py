@@ -191,7 +191,7 @@ def analyze_market(target_date_str, use_cache=True):
         if is_above_200 and is_50_above_200 and is_200_rising:
             return "Risk-On", f"市場指数順調（終値>200日線、50日>200日、200日上昇） ⇒ 通常売買OK"
         elif not is_above_200 and not is_200_rising:
-            return "Risk-Off", f"市場環境悪化（終値<200日線、200日下落） ⇒ 守り重視・新規買い控え"
+            return "Risk-Off", f"市場環境悪化（終値<200日線、200日下落） ⇒ 守り重視・本命買い見送り推奨"
         else:
             return "Neutral", f"市場環境モミ合い（方向感模索） ⇒ 厳選して売買（ダマシ警戒）"
     except Exception as e:
@@ -199,23 +199,14 @@ def analyze_market(target_date_str, use_cache=True):
 
 def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=None):
     """
-    第3弾完成版：レイトステージ最上位完全排除 ＆ チェイス禁止 ＆ 地合い連動スクリーニング
+    【改修版】Risk-Off時でもS級は出さずに、次点（参考・監視銘柄）のみを安全に出力するエンジン
     """
     tickers = stock_df['Ticker'].tolist()
     total_stock_count = len(tickers)
     results = []
     
-    # 市場環境の事前判定（地合い連動ゲート用）
+    # 市場環境の事前判定
     market_status, _ = analyze_market(target_date_str, use_cache=use_cache)
-    
-    # Risk-Off 時はブレイクアウト買いシグナルを完全停止
-    if market_status == "Risk-Off":
-        return pd.DataFrame(results), {
-            'total_stocks': total_stock_count,
-            'valid_stocks': 0,
-            'saved_cache_count': len(load_local_cache(STOCK_CACHE_FILE)),
-            'cached_count_before': 0
-        }
     
     target_dt = pd.to_datetime(target_date_str)
     needed_start_dt = target_dt - timedelta(days=450)
@@ -325,7 +316,6 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
             high_52w = sub_df['High'].tail(250).max()
             low_52w = sub_df['Low'].tail(250).min()
             
-            # トレンドテンプレート基礎（パーフェクトオーダー）
             cond_trend_base = (
                 (current_close > sma150) and
                 (sma150 > sma200) and
@@ -339,11 +329,7 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
             rise_from_low_52w = ((current_close - low_52w) / low_52w) * 100
             sma200_bias = ((current_close - sma200) / sma200) * 100
             
-            # ==============================================================
-            # 🛑 【改善方針①：最上位門前払い】レイトステージ（過熱・バブル）の完全排除
-            # 安値から150%超（2.5倍高騰）、または200日線から25%超の上方乖離は一行で即座に除外
-            # （※これにより5801や7826等のバブル崩壊暴落銘柄は物理的に100%遮断）
-            # ==============================================================
+            # 🛑 【最上位門前払い】レイトステージ（過熱バブル）完全排除
             if rise_from_low_52w > 150.0 or sma200_bias > 25.0:
                 continue
                 
@@ -353,10 +339,7 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
             dist_from_pivot = ((current_close - pivot_price) / pivot_price) * 100
             diff_from_high_52w = ((current_close - high_52w) / high_52w) * 100
             
-            # ==============================================================
-            # 🛑 【改善方針②：チェイス（高値追い）禁止ルールの適用】
-            # ピボット突破当日はピボットから+5%以内、本命は+2.5%以内の初動のみ
-            # ==============================================================
+            # 🛑 【チェイス禁止ルール】
             raw_breakout = (current_close >= pivot_price) and (vol_ratio >= 1.5) and (dist_from_pivot <= 5.0)
             raw_near_pivot = (-2.5 <= dist_from_pivot < 0.0)
             
@@ -369,20 +352,12 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
             
             # ----------------------------------------------------------
             # 🏆 【本命・高勝率S級】判定条件
-            # 1. 売買代金 >= 20億円
-            # 2. 52週高値乖離率 >= -5.0%
-            # 3. レイトステージ完全排除（すでに最上位で通過済み）
-            # 4. ブレイク当日：市場環境がRisk-Onのみ許可 ＆ ピボット+2.5%以内の初動 ＆ 出来高1.5〜3.0倍
-            # 5. ブレイク前夜：売り枯れ(出来高1.2倍未満) ＆ ピボット直下 -2.5%〜-0.1%
+            # ※【重要】市場環境が Risk-On の時のみ選定（Risk-OffやNeutralでは本命買いは見送り！）
             # ----------------------------------------------------------
             is_main_tier = False
-            if turnover_oku >= 20.0 and diff_from_high_52w >= -5.0:
-                # パターンA：ブレイク当日（Risk-On時のみ許可・チェイス禁止2.5%以内）
-                if (market_status == "Risk-On" and 
-                    raw_breakout and 
-                    (1.5 <= vol_ratio <= 3.0) and 
-                    (0.0 <= dist_from_pivot <= 2.5)):
-                    
+            if market_status == "Risk-On" and turnover_oku >= 20.0 and diff_from_high_52w >= -5.0:
+                # パターンA：ブレイク当日（初動ゾーン+2.5%以内限定）
+                if raw_breakout and (1.5 <= vol_ratio <= 3.0) and (0.0 <= dist_from_pivot <= 2.5):
                     is_main_tier = True
                     rank = "🏆 本命 (S級)"
                     status_label = "🏆【本命・ブレイク当日】初動適正ブレイク（チェイスなし・バブルなし）"
@@ -409,26 +384,27 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
                     
             # ----------------------------------------------------------
             # 🥈 【次点・参考候補A級】判定条件
-            # 売買代金10億円以上、高値から-8%以内
+            # ※【重要】Risk-Off の日であっても、市場に逆行して強い銘柄を「参考・監視候補」として出力！
             # ----------------------------------------------------------
             if not is_main_tier:
                 if turnover_oku >= 10.0 and diff_from_high_52w >= -8.0:
                     rank = "🥈 次点 (A級)"
+                    geai_note = "【※市場Risk-Off下での逆行高・監視推奨】" if market_status == "Risk-Off" else ""
                     if raw_breakout:
-                        status_label = "🥈【次点・ブレイク当日】モメンタム突破銘柄"
+                        status_label = f"🥈【次点・ブレイク当日】モメンタム突破銘柄 {geai_note}"
                         reason_detail = (
                             f"**【次点A級・参考候補理由】**:\n"
+                            f"- **地合い状態**: 現在市場は **{market_status}** です。本命買いは見送りですが、逆行高の強い候補として参考表示しています。\n"
                             f"- **ブレイク状況**: 終値 {current_close:.1f}円 がピボット（{pivot_price:.1f}円）を突破（乖離: {dist_from_pivot:+.2f}%）。\n"
-                            f"- **出来高倍率**: **{vol_ratio:.2f}倍**。\n"
-                            f"- **売買代金**: **{turnover_oku:.1f}億円**、高値乖離: **{diff_from_high_52w:+.2f}%**。"
+                            f"- **出来高倍率**: **{vol_ratio:.2f}倍**、売買代金: **{turnover_oku:.1f}億円**。"
                         )
                     else:
-                        status_label = "🥈【次点・ブレイク前夜】ピボット近傍モミ合い"
+                        status_label = f"🥈【次点・ブレイク前夜】ピボット近傍モミ合い {geai_note}"
                         reason_detail = (
                             f"**【次点A級・参考候補理由】**:\n"
+                            f"- **地合い状態**: 現在市場は **{market_status}** です。相場反転時の本命候補としてウォッチリスト推奨です。\n"
                             f"- **株価位置**: ピボット（{pivot_price:.1f}円）から **{dist_from_pivot:+.2f}%**。\n"
-                            f"- **出来高倍率**: **{vol_ratio:.2f}倍**。\n"
-                            f"- **売買代金**: **{turnover_oku:.1f}億円**。"
+                            f"- **出来高倍率**: **{vol_ratio:.2f}倍**、売買代金: **{turnover_oku:.1f}億円**。"
                         )
                         
             if rank is None:
@@ -474,7 +450,7 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
 
 def batch_validate_trades(screened_df, signal_date_str, risk_reward_ratio=2.5, progress_bar=None):
     """
-    【第3弾プロ仕様】逆指値ピボット突破約定 ＆ ギャップ過熱見送り ＆ リアルスリッページ検証
+    逆指値ピボット突破約定 ＆ ギャップ過熱見送り ＆ リアルスリッページ検証
     """
     if screened_df.empty:
         return pd.DataFrame()
@@ -555,9 +531,6 @@ def batch_validate_trades(screened_df, signal_date_str, risk_reward_ratio=2.5, p
             if pd.isna(atr20) or atr20 <= 0:
                 atr20 = past_df['Close'].iloc[-1] * 0.02
 
-            # ==============================================================
-            # 🎯 逆指値（Stop Order）ブレイク約定 ＆ ギャップ過熱見送り判定
-            # ==============================================================
             breakout_occurred = False
             entry_date = None
             entry_price = None
@@ -566,7 +539,6 @@ def batch_validate_trades(screened_df, signal_date_str, risk_reward_ratio=2.5, p
             scan_period = future_df.head(5)
             for d_date, d_row in scan_period.iterrows():
                 if d_row['High'] >= pivot_price:
-                    # 始値がピボットから5%以上上で寄り付いた場合はチェイス禁止（見送り）
                     if d_row['Open'] > pivot_price * 1.05:
                         skip_status = "🚫 見送り（寄り付き5%超ギャップアップ過熱・チェイス禁止）"
                         breakout_occurred = False
@@ -632,7 +604,6 @@ def batch_validate_trades(screened_df, signal_date_str, risk_reward_ratio=2.5, p
                 if hit_sl and hit_tp:
                     status = "❌ 損切り (同日到達・保守判定)"
                     exit_date = d_idx
-                    # 窓開けギャップダウンのスリッページ反映
                     exit_price = min(d_open, sl_price) if d_open < sl_price else sl_price
                     pnl_amount = exit_price - entry_price
                     pnl_pct = (pnl_amount / entry_price) * 100

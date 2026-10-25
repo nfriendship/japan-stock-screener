@@ -190,7 +190,7 @@ market_status, market_msg = analyze_market(target_date_str, use_cache=use_cache)
 if "Risk-On" in market_status:
     st.success(f"【市場環境：Risk-On】 {market_msg}")
 elif "Risk-Off" in market_status:
-    st.error(f"【市場環境：Risk-Off】 {market_msg} ⚠️ ブレイクアウトのダマシ確率が極めて高いため、本命銘柄であっても買いは見送りを強く推奨します。")
+    st.error(f"【市場環境：Risk-Off】 {market_msg} ⚠️ 本命S級の買いシグナルは停止中ですが、逆行高の【次点・参考銘柄】を監視用に表示しています。")
 else:
     st.warning(f"【市場環境：Neutral】 {market_msg} ⚠️ トレンドの方向感が曖昧なため、厳選した本命S級のみに絞るか、ロットを落としたトレードを推奨します。")
 
@@ -227,7 +227,7 @@ if 'result_df' in st.session_state:
         st.info(f"📊 **審査母数**: 東証の実在個別株 **{meta.get('valid_stocks', 0)} 銘柄** を審査（うち既存キャッシュ利用: **{meta.get('cached_count_before', 0)} 銘柄**）")
         
     if res_df.empty:
-        st.warning("厳格なスクリーニング条件（バブル排除・チェイス禁止等）に合致する銘柄は見つかりませんでした（地合い不良・見送り推奨）。")
+        st.warning("厳格なスクリーニング条件に合致する銘柄は見つかりませんでした（見送り推奨）。")
     else:
         main_df = res_df[res_df['ランク'].str.contains('本命')]
         sub_df = res_df[res_df['ランク'].str.contains('次点')]
@@ -245,7 +245,7 @@ if 'result_df' in st.session_state:
         
         with tab1:
             if main_df.empty:
-                st.info("※ この判定日における本命S級銘柄はありませんでした。")
+                st.info("※ この判定日における本命S級銘柄はありませんでした（Risk-Offまたは過熱排除による資金防衛）。")
             else:
                 st.dataframe(main_df[display_cols], use_container_width=True)
                 st.markdown("#### 🔍 本命S級の選定理由・詳細")
