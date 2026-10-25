@@ -73,7 +73,7 @@ def get_tse_stock_list():
         "3101": "東洋紡", "3103": "ユニチカ", "3407": "旭化成", "3402": "東レ",
         "5401": "日本製鉄", "5711": "三菱マテリアル", "5801": "古河電気工業", "6701": "日本電気",
         "8001": "伊藤忠商事", "8031": "三井物産", "8058": "三菱商事", "8002": "丸紅",
-        "8053": "住友商事", "8316": "三井武友フィナンシャルG", "8411": "みずほフィナンシャルG", "8253": "クレディセゾン",
+        "8053": "住友商事", "8316": "三井住友フィナンシャルG", "8411": "みずほフィナンシャルG", "8253": "クレディセゾン",
         "8591": "オリックス", "8750": "第一生命ホールディングス", "8725": "MS&ADインシュアランスG", "8308": "りそなホールディングス",
         "8473": "SBIホールディングス", "4188": "三菱ケミカルグループ", "4208": "UBE", "4452": "花王",
         "4911": "資生堂", "4005": "住友化学", "4183": "三井化学", "4204": "積水化学工業",
@@ -199,7 +199,7 @@ def analyze_market(target_date_str, use_cache=True):
 
 def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=None):
     """
-    【修正完全版】レイトステージ最上位完全排除 ＆ チェイス禁止 ＆ 地合い連動
+    発注ガイド価格（買い逆指値、買付上限、SL、TP）を自動算出するスクリーニングエンジン
     """
     tickers = stock_df['Ticker'].tolist()
     total_stock_count = len(tickers)
@@ -327,11 +327,7 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
             rise_from_low_52w = ((current_close - low_52w) / low_52w) * 100
             sma200_bias = ((current_close - sma200) / sma200) * 100
             
-            # ==============================================================
-            # 🛑 【第1の絶対防壁】レイトステージ（過熱バブル）の物理的完全排除
-            # 安値から150%超の上昇、または200日線から25%超の上方乖離は一行で即座に除外
-            # （※5801や7826等のバブル銘柄はブレイク当日・前夜問わず一切通過不可）
-            # ==============================================================
+            # 🛑 【第1の絶対防壁】レイトステージ（過熱バブル）完全排除
             if rise_from_low_52w > 150.0 or sma200_bias > 25.0:
                 continue
                 
@@ -348,13 +344,41 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
             if not (raw_breakout or raw_near_pivot):
                 continue
                 
+            # ==============================================================
+            # 🎯 実戦発注価格（買い逆指値、買付上限、SL、TP）の精密算出
+            # ==============================================================
+            high_low = sub_df['High'] - sub_df['Low']
+            high_cp = np.abs(sub_df['High'] - sub_df['Close'].shift())
+            low_cp = np.abs(sub_df['Low'] - sub_df['Close'].shift())
+            tr = pd.concat([high_low, high_cp, low_cp], axis=1).max(axis=1)
+            atr20 = tr.rolling(20).mean().iloc[-1]
+            if pd.isna(atr20) or atr20 <= 0:
+                atr20 = current_close * 0.02
+
+            # 買い逆指値トリガー価格（ピボット価格）
+            order_buy_trigger = round(pivot_price, 1)
+            # 買付上限価格（ピボット+2.5%：これ以上上で寄り付いたらチェイス禁止見送り）
+            order_chase_limit = round(pivot_price * 1.025, 1)
+            # 損切りライン目安（SL）
+            calc_sl = max(pivot_price * 0.95, pivot_price - (1.5 * atr20))
+            order_sl_price = round(min(calc_sl, order_buy_trigger * 0.95), 1)
+            # 1株あたりリスク額
+            risk_amount = order_buy_trigger - order_sl_price
+            if risk_amount <= 0:
+                risk_amount = order_buy_trigger * 0.05
+                order_sl_price = round(order_buy_trigger - risk_amount, 1)
+            # 利確ターゲット目安（TP: 2.5R）
+            order_tp_price = round(order_buy_trigger + (risk_amount * 2.5), 1)
+            
+            sl_pct = ((order_sl_price - order_buy_trigger) / order_buy_trigger) * 100
+            tp_pct = ((order_tp_price - order_buy_trigger) / order_buy_trigger) * 100
+
             rank = None
             status_label = None
             reason_detail = None
             
             # ----------------------------------------------------------
             # 🏆 【本命・高勝率S級】判定条件
-            # ※市場環境が Risk-On の時のみ許可（Risk-OffやNeutralでは本命買いは見送り！）
             # ----------------------------------------------------------
             is_main_tier = False
             if market_status == "Risk-On" and turnover_oku >= 20.0 and diff_from_high_52w >= -5.0:
@@ -363,27 +387,12 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
                     is_main_tier = True
                     rank = "🏆 本命 (S級)"
                     status_label = "🏆【本命・ブレイク当日】初動適正ブレイク（チェイスなし・バブル排除済）"
-                    reason_detail = (
-                        f"**【本命S級・高勝率選定理由】**:\n"
-                        f"- **出来高倍率**: **{vol_ratio:.2f}倍**（勝ち組特有の1.5〜3.0倍。過熱なし）。\n"
-                        f"- **チェイス禁止クリア**: ピボット突破からわずか **{dist_from_pivot:+.2f}%** の初動。\n"
-                        f"- **レイトステージ排除済**: 安値上昇率 **{rise_from_low_52w:.1f}%** (基準150%以下)、200日線乖離 **{sma200_bias:+.1f}%** (基準25%以下)。\n"
-                        f"- **流動性**: 20日平均売買代金 **{turnover_oku:.1f}億円**（大口機関投資家参入）。\n"
-                        f"- **高値圏維持**: 52週高値からわずか **{diff_from_high_52w:+.2f}%**。"
-                    )
                 # パターンB：ブレイク前夜（VCP売り枯れ・ピボット直下）
                 elif raw_near_pivot and (vol_ratio < 1.2) and (-2.5 <= dist_from_pivot <= -0.1):
                     is_main_tier = True
                     rank = "🏆 本命 (S級)"
                     status_label = "🏆【本命・ブレイク前夜】VCP売り枯れ ＆ ピボット直下待機"
-                    reason_detail = (
-                        f"**【本命S級・高勝率選定理由】**:\n"
-                        f"- **売り枯れ確認**: 出来高倍率 **{vol_ratio:.2f}倍**（1.2倍未満の明確な売り枯れ）。\n"
-                        f"- **ピボット直下**: ピボット価格から **{dist_from_pivot:+.2f}%** の至近距離。\n"
-                        f"- **レイトステージ排除済**: 安値上昇率 **{rise_from_low_52w:.1f}%**、200日線乖離 **{sma200_bias:+.1f}%**。\n"
-                        f"- **流動性**: 20日平均売買代金 **{turnover_oku:.1f}億円**。"
-                    )
-                    
+
             # ----------------------------------------------------------
             # 🥈 【次点・参考候補A級】判定条件
             # ----------------------------------------------------------
@@ -393,31 +402,49 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
                     geai_note = "【※市場Risk-Off下での逆行高・監視推奨】" if market_status == "Risk-Off" else ""
                     if raw_breakout:
                         status_label = f"🥈【次点・ブレイク当日】モメンタム突破銘柄 {geai_note}"
-                        reason_detail = (
-                            f"**【次点A級・参考候補理由】**:\n"
-                            f"- **地合い状態**: 現在市場は **{market_status}** です。本命買いは見送りですが、逆行高の強い候補として参考表示しています。\n"
-                            f"- **ブレイク状況**: 終値 {current_close:.1f}円 がピボット（{pivot_price:.1f}円）を突破（乖離: {dist_from_pivot:+.2f}%）。\n"
-                            f"- **レイトステージ排除済**: 安値上昇率 **{rise_from_low_52w:.1f}%**、200日線乖離 **{sma200_bias:+.1f}%**。\n"
-                            f"- **出来高倍率**: **{vol_ratio:.2f}倍**、売買代金: **{turnover_oku:.1f}億円**。"
-                        )
                     else:
                         status_label = f"🥈【次点・ブレイク前夜】ピボット近傍モミ合い {geai_note}"
-                        reason_detail = (
-                            f"**【次点A級・参考候補理由】**:\n"
-                            f"- **地合い状態**: 現在市場は **{market_status}** です。相場反転時の本命候補としてウォッチリスト推奨です。\n"
-                            f"- **株価位置**: ピボット（{pivot_price:.1f}円）から **{dist_from_pivot:+.2f}%**。\n"
-                            f"- **レイトステージ排除済**: 安値上昇率 **{rise_from_low_52w:.1f}%**、200日線乖離 **{sma200_bias:+.1f}%**。\n"
-                            f"- **出来高倍率**: **{vol_ratio:.2f}倍**、売買代金: **{turnover_oku:.1f}億円**。"
-                        )
-                        
+
             if rank is None:
                 continue
+
+            order_guide_text = (
+                f"\n\n---\n"
+                f"### 📱 証券会社アプリでの発注ガイド\n"
+                f"- **【注文種別】**: **逆指値注文（Stop Order）**\n"
+                f"- **【買いトリガー】**: 現在値が **`{order_buy_trigger} 円`** 以上になったら買い成行（または指値）\n"
+                f"- **【買付上限 (チェイス禁止)】**: 始値が **`{order_chase_limit} 円`** を超えて寄り付いた場合は注文取消（見送り）\n"
+                f"- **【損切り予約 (SL)】**: **`{order_sl_price} 円`** (想定リスク: **{sl_pct:.1f}%**)\n"
+                f"- **【利確予約 (TP 2.5R)】**: **`{order_tp_price} 円`** (想定利益: **{tp_pct:+.1f}%**)"
+            )
+
+            if rank == "🏆 本命 (S級)":
+                reason_detail = (
+                    f"**【本命S級・高勝率選定理由】**:\n"
+                    f"- **出来高倍率**: **{vol_ratio:.2f}倍**（勝ち組特有の1.5〜3.0倍。過熱なし）。\n"
+                    f"- **レイトステージ排除済**: 安値上昇率 **{rise_from_low_52w:.1f}%** (基準150%以下)、200日線乖離 **{sma200_bias:+.1f}%** (基準25%以下)。\n"
+                    f"- **流動性**: 20日平均売買代金 **{turnover_oku:.1f}億円**（大口機関投資家参入）。\n"
+                    f"- **高値圏維持**: 52週高値からわずか **{diff_from_high_52w:+.2f}%**。"
+                    f"{order_guide_text}"
+                )
+            else:
+                reason_detail = (
+                    f"**【次点A級・参考候補理由】**:\n"
+                    f"- **地合い状態**: 現在市場は **{market_status}** です。\n"
+                    f"- **株価位置**: ピボット（{pivot_price:.1f}円）から **{dist_from_pivot:+.2f}%**。\n"
+                    f"- **出来高倍率**: **{vol_ratio:.2f}倍**、売買代金: **{turnover_oku:.1f}億円**。"
+                    f"{order_guide_text}"
+                )
                 
             results.append({
                 'ランク': rank,
                 'コード': code,
                 'ティッカー': ticker,
                 '企業名': name,
+                '🎯 買い逆指値(円)': order_buy_trigger,
+                '🚫 買付上限(円)': order_chase_limit,
+                '🛡️ 損切り目安(SL)': order_sl_price,
+                '🎯 利確目安(TP)': order_tp_price,
                 '現在値': current_close,
                 'ピボット価格': round(pivot_price, 1),
                 'ピボット乖離率(%)': round(dist_from_pivot, 2),

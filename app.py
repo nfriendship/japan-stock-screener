@@ -209,10 +209,7 @@ if st.button("指定日でのスクリーニングを実行する", type="primar
     progress_bar.empty()
     st.success("解析が完了しました！")
     
-    # ==============================================================
     # 🛑 【第2の絶対防壁】app.py側でもバブル崩壊銘柄（150%超）を強制除去
-    # （※万一screener.pyがメモリキャッシュで遅延してもここで確実に粉砕する）
-    # ==============================================================
     if not result_df.empty and '52週安値上昇率(%)' in result_df.columns:
         result_df = result_df[result_df['52週安値上昇率(%)'] <= 150.0]
         if 'SMA200乖離率(%)' in result_df.columns:
@@ -249,7 +246,12 @@ if 'result_df' in st.session_state:
             f"📑 全一覧 ({len(res_df)}件)"
         ])
         
-        preferred_cols = ['ランク', 'コード', '企業名', '現在値', 'ピボット価格', '状態', '出来高倍率', '20日平均売買代金(億円)', '52週高値乖離率(%)', '52週安値上昇率(%)', 'SMA200乖離率(%)']
+        # 実戦発注用カラム（買い逆指値、買付上限、SL、TP）を最優先で配置
+        preferred_cols = [
+            'ランク', 'コード', '企業名', 
+            '🎯 買い逆指値(円)', '🚫 買付上限(円)', '🛡️ 損切り目安(SL)', '🎯 利確目安(TP)', 
+            '現在値', '出来高倍率', '20日平均売買代金(億円)', '52週高値乖離率(%)', '52週安値上昇率(%)', 'SMA200乖離率(%)'
+        ]
         display_cols = [c for c in preferred_cols if c in res_df.columns]
         
         with tab1:
@@ -257,10 +259,10 @@ if 'result_df' in st.session_state:
                 st.info("※ この判定日における本命S級銘柄はありませんでした（Risk-Offまたは過熱排除による資金防衛）。")
             else:
                 st.dataframe(main_df[display_cols], use_container_width=True)
-                st.markdown("#### 🔍 本命S級の選定理由・詳細")
+                st.markdown("#### 🔍 本命S級の選定理由 ＆ 📱 発注ガイド")
                 for _, row in main_df.iterrows():
                     extra_info = f" / 200日線乖離: {row['SMA200乖離率(%)']:+.1f}%" if 'SMA200乖離率(%)' in row else ""
-                    with st.expander(f"【{row['コード']}】 {row['企業名']} （現在値: {row['現在値']}円 / 出来高: {row['出来高倍率']}倍 / 代金: {row['20日平均売買代金(億円)']}億円{extra_info}）"):
+                    with st.expander(f"【{row['コード']}】 {row['企業名']} （🎯 買い逆指値: {row['🎯 買い逆指値(円)']}円 ｜ SL: {row['🛡️ 損切り目安(SL)']}円 ｜ TP: {row['🎯 利確目安(TP)']}円{extra_info}）"):
                         st.markdown(row['💡 抽出理由・根拠詳細'])
                         
         with tab2:
@@ -268,10 +270,10 @@ if 'result_df' in st.session_state:
                 st.info("※ 次点A級銘柄はありませんでした。")
             else:
                 st.dataframe(sub_df[display_cols], use_container_width=True)
-                st.markdown("#### 🔍 次点A級の選定理由・詳細")
+                st.markdown("#### 🔍 次点A級の選定理由 ＆ 📱 発注ガイド")
                 for _, row in sub_df.iterrows():
                     extra_info = f" / 200日線乖離: {row['SMA200乖離率(%)']:+.1f}%" if 'SMA200乖離率(%)' in row else ""
-                    with st.expander(f"【{row['コード']}】 {row['企業名']} （現在値: {row['現在値']}円 / 出来高: {row['出来高倍率']}倍 / 代金: {row['20日平均売買代金(億円)']}億円{extra_info}）"):
+                    with st.expander(f"【{row['コード']}】 {row['企業名']} （🎯 買い逆指値: {row['🎯 買い逆指値(円)']}円 ｜ SL: {row['🛡️ 損切り目安(SL)']}円 ｜ TP: {row['🎯 利確目安(TP)']}円{extra_info}）"):
                         st.markdown(row['💡 抽出理由・根拠詳細'])
                         
         with tab3:
