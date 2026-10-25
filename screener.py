@@ -73,7 +73,7 @@ def get_tse_stock_list():
         "3101": "東洋紡", "3103": "ユニチカ", "3407": "旭化成", "3402": "東レ",
         "5401": "日本製鉄", "5711": "三菱マテリアル", "5801": "古河電気工業", "6701": "日本電気",
         "8001": "伊藤忠商事", "8031": "三井物産", "8058": "三菱商事", "8002": "丸紅",
-        "8053": "住友商事", "8316": "三井住友フィナンシャルG", "8411": "みずほフィナンシャルG", "8253": "クレディセゾン",
+        "8053": "住友商事", "8316": "三井武友フィナンシャルG", "8411": "みずほフィナンシャルG", "8253": "クレディセゾン",
         "8591": "オリックス", "8750": "第一生命ホールディングス", "8725": "MS&ADインシュアランスG", "8308": "りそなホールディングス",
         "8473": "SBIホールディングス", "4188": "三菱ケミカルグループ", "4208": "UBE", "4452": "花王",
         "4911": "資生堂", "4005": "住友化学", "4183": "三井化学", "4204": "積水化学工業",
@@ -142,7 +142,7 @@ def get_tse_stock_list():
     })
 
 def analyze_market(target_date_str, use_cache=True):
-    """日経平均の市場判定（判定日に応じた過去データ自動補完）"""
+    """日経平均の市場判定"""
     target_dt = pd.to_datetime(target_date_str)
     needed_start_dt = target_dt - timedelta(days=450)
     needed_start_str = needed_start_dt.strftime('%Y-%m-%d')
@@ -199,13 +199,12 @@ def analyze_market(target_date_str, use_cache=True):
 
 def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=None):
     """
-    【修正完全版】Risk-Off時でも早期中断せず全銘柄を審査し、S級は出さずに次点（逆行高参考銘柄）を出力する
+    【修正完全版】レイトステージ最上位完全排除 ＆ チェイス禁止 ＆ 地合い連動
     """
     tickers = stock_df['Ticker'].tolist()
     total_stock_count = len(tickers)
     results = []
     
-    # 市場環境の事前判定（※早期リターンは完全撤廃し、全件審査を行う！）
     market_status, _ = analyze_market(target_date_str, use_cache=use_cache)
     
     target_dt = pd.to_datetime(target_date_str)
@@ -305,7 +304,6 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
             avg_turnover = sub_df['Turnover'].rolling(20).mean().iloc[-1]
             turnover_oku = avg_turnover / 100000000.0
             
-            # 最低流動性：売買代金5億円以上
             if turnover_oku < 5.0:
                 continue
                 
@@ -329,7 +327,11 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
             rise_from_low_52w = ((current_close - low_52w) / low_52w) * 100
             sma200_bias = ((current_close - sma200) / sma200) * 100
             
-            # 🛑 【最上位門前払い】レイトステージ（過熱バブル）完全排除
+            # ==============================================================
+            # 🛑 【第1の絶対防壁】レイトステージ（過熱バブル）の物理的完全排除
+            # 安値から150%超の上昇、または200日線から25%超の上方乖離は一行で即座に除外
+            # （※5801や7826等のバブル銘柄はブレイク当日・前夜問わず一切通過不可）
+            # ==============================================================
             if rise_from_low_52w > 150.0 or sma200_bias > 25.0:
                 continue
                 
@@ -352,7 +354,7 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
             
             # ----------------------------------------------------------
             # 🏆 【本命・高勝率S級】判定条件
-            # ※【重要】市場環境が Risk-On の時のみ許可（Risk-OffやNeutralでは本命買いは見送り！）
+            # ※市場環境が Risk-On の時のみ許可（Risk-OffやNeutralでは本命買いは見送り！）
             # ----------------------------------------------------------
             is_main_tier = False
             if market_status == "Risk-On" and turnover_oku >= 20.0 and diff_from_high_52w >= -5.0:
@@ -360,11 +362,11 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
                 if raw_breakout and (1.5 <= vol_ratio <= 3.0) and (0.0 <= dist_from_pivot <= 2.5):
                     is_main_tier = True
                     rank = "🏆 本命 (S級)"
-                    status_label = "🏆【本命・ブレイク当日】初動適正ブレイク（チェイスなし・バブルなし）"
+                    status_label = "🏆【本命・ブレイク当日】初動適正ブレイク（チェイスなし・バブル排除済）"
                     reason_detail = (
                         f"**【本命S級・高勝率選定理由】**:\n"
                         f"- **出来高倍率**: **{vol_ratio:.2f}倍**（勝ち組特有の1.5〜3.0倍。過熱なし）。\n"
-                        f"- **チェイス禁止クリア**: ピボット突破からわずか **{dist_from_pivot:+.2f}%** の初動（高値掴みリスク排除）。\n"
+                        f"- **チェイス禁止クリア**: ピボット突破からわずか **{dist_from_pivot:+.2f}%** の初動。\n"
                         f"- **レイトステージ排除済**: 安値上昇率 **{rise_from_low_52w:.1f}%** (基準150%以下)、200日線乖離 **{sma200_bias:+.1f}%** (基準25%以下)。\n"
                         f"- **流動性**: 20日平均売買代金 **{turnover_oku:.1f}億円**（大口機関投資家参入）。\n"
                         f"- **高値圏維持**: 52週高値からわずか **{diff_from_high_52w:+.2f}%**。"
@@ -376,7 +378,7 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
                     status_label = "🏆【本命・ブレイク前夜】VCP売り枯れ ＆ ピボット直下待機"
                     reason_detail = (
                         f"**【本命S級・高勝率選定理由】**:\n"
-                        f"- **売り枯れ確認**: 出来高倍率 **{vol_ratio:.2f}倍**（1.2倍未満の明確な売り枯れ/ドライアップ）。\n"
+                        f"- **売り枯れ確認**: 出来高倍率 **{vol_ratio:.2f}倍**（1.2倍未満の明確な売り枯れ）。\n"
                         f"- **ピボット直下**: ピボット価格から **{dist_from_pivot:+.2f}%** の至近距離。\n"
                         f"- **レイトステージ排除済**: 安値上昇率 **{rise_from_low_52w:.1f}%**、200日線乖離 **{sma200_bias:+.1f}%**。\n"
                         f"- **流動性**: 20日平均売買代金 **{turnover_oku:.1f}億円**。"
@@ -384,7 +386,6 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
                     
             # ----------------------------------------------------------
             # 🥈 【次点・参考候補A級】判定条件
-            # ※【重要】Risk-Off の日であっても、市場に逆行して強い銘柄を「参考・監視候補」として出力！
             # ----------------------------------------------------------
             if not is_main_tier:
                 if turnover_oku >= 10.0 and diff_from_high_52w >= -8.0:
@@ -396,6 +397,7 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
                             f"**【次点A級・参考候補理由】**:\n"
                             f"- **地合い状態**: 現在市場は **{market_status}** です。本命買いは見送りですが、逆行高の強い候補として参考表示しています。\n"
                             f"- **ブレイク状況**: 終値 {current_close:.1f}円 がピボット（{pivot_price:.1f}円）を突破（乖離: {dist_from_pivot:+.2f}%）。\n"
+                            f"- **レイトステージ排除済**: 安値上昇率 **{rise_from_low_52w:.1f}%**、200日線乖離 **{sma200_bias:+.1f}%**。\n"
                             f"- **出来高倍率**: **{vol_ratio:.2f}倍**、売買代金: **{turnover_oku:.1f}億円**。"
                         )
                     else:
@@ -404,6 +406,7 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
                             f"**【次点A級・参考候補理由】**:\n"
                             f"- **地合い状態**: 現在市場は **{market_status}** です。相場反転時の本命候補としてウォッチリスト推奨です。\n"
                             f"- **株価位置**: ピボット（{pivot_price:.1f}円）から **{dist_from_pivot:+.2f}%**。\n"
+                            f"- **レイトステージ排除済**: 安値上昇率 **{rise_from_low_52w:.1f}%**、200日線乖離 **{sma200_bias:+.1f}%**。\n"
                             f"- **出来高倍率**: **{vol_ratio:.2f}倍**、売買代金: **{turnover_oku:.1f}億円**。"
                         )
                         

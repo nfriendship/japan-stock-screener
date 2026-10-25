@@ -209,6 +209,15 @@ if st.button("指定日でのスクリーニングを実行する", type="primar
     progress_bar.empty()
     st.success("解析が完了しました！")
     
+    # ==============================================================
+    # 🛑 【第2の絶対防壁】app.py側でもバブル崩壊銘柄（150%超）を強制除去
+    # （※万一screener.pyがメモリキャッシュで遅延してもここで確実に粉砕する）
+    # ==============================================================
+    if not result_df.empty and '52週安値上昇率(%)' in result_df.columns:
+        result_df = result_df[result_df['52週安値上昇率(%)'] <= 150.0]
+        if 'SMA200乖離率(%)' in result_df.columns:
+            result_df = result_df[result_df['SMA200乖離率(%)'] <= 25.0]
+            
     st.session_state['result_df'] = result_df
     st.session_state['meta_stats'] = meta_stats
     st.session_state['target_date_str'] = target_date_str
