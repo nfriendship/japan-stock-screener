@@ -155,7 +155,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("📈 株式買い候補銘柄 自動抽出システム")
-st.markdown("ビッグデータ検証に基づく **「本命S級（過熱・バブル排除）」** と **「逆指値ピボット突破約定」** を備えたプロ仕様システムです。")
+st.markdown("ビッグデータ検証に基づく **「本命S級（過熱・バブル完全排除）」** と **「逆指値ピボット突破約定」** を備えたプロ仕様システムです。")
 
 # --- サイドバー：実行設定 ＆ キャッシュ操作 ---
 st.sidebar.header("⚙ 実行設定")
@@ -227,7 +227,7 @@ if 'result_df' in st.session_state:
         st.info(f"📊 **審査母数**: 東証の実在個別株 **{meta.get('valid_stocks', 0)} 銘柄** を審査（うち既存キャッシュ利用: **{meta.get('cached_count_before', 0)} 銘柄**）")
         
     if res_df.empty:
-        st.warning("厳格なスクリーニング条件に一致する銘柄は見つかりませんでした。")
+        st.warning("厳格なスクリーニング条件（バブル排除・チェイス禁止等）に合致する銘柄は見つかりませんでした（地合い不良・見送り推奨）。")
     else:
         main_df = res_df[res_df['ランク'].str.contains('本命')]
         sub_df = res_df[res_df['ランク'].str.contains('次点')]
@@ -240,7 +240,6 @@ if 'result_df' in st.session_state:
             f"📑 全一覧 ({len(res_df)}件)"
         ])
         
-        # 安全ガード付き表示列（存在する列のみを安全に抽出）
         preferred_cols = ['ランク', 'コード', '企業名', '現在値', 'ピボット価格', '状態', '出来高倍率', '20日平均売買代金(億円)', '52週高値乖離率(%)', '52週安値上昇率(%)', 'SMA200乖離率(%)']
         display_cols = [c for c in preferred_cols if c in res_df.columns]
         
@@ -285,7 +284,7 @@ if 'result_df' in st.session_state:
         # ==============================================================
         st.markdown("---")
         st.subheader("⚡ 抽出銘柄のトレード結果・一括検証（逆指値ブレイク約定方式）")
-        st.markdown("判定日以降、**ピボット価格を上抜けた瞬間（逆指値）に約定した銘柄のみを追跡検証**します（抜けずに下落した銘柄は「見送り」として損切りを未然回避）。")
+        st.markdown("判定日以降、**ピボット価格を上抜けた瞬間（逆指値）に約定した銘柄のみを追跡検証**します（抜けずに下落した銘柄やギャップ過熱銘柄は「見送り」として損切りを未然回避）。")
         
         v_col1, v_col2 = st.columns([1, 2])
         with v_col1:
