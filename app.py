@@ -227,7 +227,7 @@ if 'result_df' in st.session_state:
         st.info(f"📊 **審査母数**: 東証の実在個別株 **{meta.get('valid_stocks', 0)} 銘柄** を審査（うち既存キャッシュ利用: **{meta.get('cached_count_before', 0)} 銘柄**）")
         
     if res_df.empty:
-        st.warning("厳格なスクリーニング条件に合致する銘柄は見つかりませんでした（見送り推奨）。")
+        st.warning("条件に合致する銘柄は見つかりませんでした（Risk-Off・見送り推奨）。")
     else:
         main_df = res_df[res_df['ランク'].str.contains('本命')]
         sub_df = res_df[res_df['ランク'].str.contains('次点')]

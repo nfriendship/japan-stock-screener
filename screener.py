@@ -199,13 +199,13 @@ def analyze_market(target_date_str, use_cache=True):
 
 def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=None):
     """
-    【改修版】Risk-Off時でもS級は出さずに、次点（参考・監視銘柄）のみを安全に出力するエンジン
+    【修正完全版】Risk-Off時でも早期中断せず全銘柄を審査し、S級は出さずに次点（逆行高参考銘柄）を出力する
     """
     tickers = stock_df['Ticker'].tolist()
     total_stock_count = len(tickers)
     results = []
     
-    # 市場環境の事前判定
+    # 市場環境の事前判定（※早期リターンは完全撤廃し、全件審査を行う！）
     market_status, _ = analyze_market(target_date_str, use_cache=use_cache)
     
     target_dt = pd.to_datetime(target_date_str)
@@ -352,7 +352,7 @@ def run_screener_batch(stock_df, target_date_str, use_cache=True, progress_bar=N
             
             # ----------------------------------------------------------
             # 🏆 【本命・高勝率S級】判定条件
-            # ※【重要】市場環境が Risk-On の時のみ選定（Risk-OffやNeutralでは本命買いは見送り！）
+            # ※【重要】市場環境が Risk-On の時のみ許可（Risk-OffやNeutralでは本命買いは見送り！）
             # ----------------------------------------------------------
             is_main_tier = False
             if market_status == "Risk-On" and turnover_oku >= 20.0 and diff_from_high_52w >= -5.0:
